@@ -23,6 +23,7 @@ export-abi = ["stylus-sdk/export-abi"]
 debug = ["stylus-sdk/debug"]
 reputation = []
 achievements = []
+token = []
 
 [lib]
 crate-type = ["lib", "cdylib"]
