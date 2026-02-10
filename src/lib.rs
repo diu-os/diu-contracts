@@ -4,10 +4,15 @@ extern crate alloc;
 
 /// DIURegistry — user identity, ORCID linking, verification.
 /// Default entrypoint for WASM builds.
-#[cfg(any(test, not(feature = "reputation")))]
+#[cfg(any(test, not(any(feature = "reputation", feature = "achievements"))))]
 pub mod registry;
 
 /// DIUReputation — XP tracking, levels, daily login streaks.
 /// Use `--features reputation` to build as WASM entrypoint.
 #[cfg(any(test, feature = "reputation"))]
 pub mod reputation;
+
+/// DIUAchievements — soulbound ERC-721 NFT badges and certificates.
+/// Use `--features achievements` to build as WASM entrypoint.
+#[cfg(any(test, feature = "achievements"))]
+pub mod achievements;

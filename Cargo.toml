@@ -22,6 +22,7 @@ stylus-sdk = { version = "0.10.0", features = ["stylus-test"] }
 export-abi = ["stylus-sdk/export-abi"]
 debug = ["stylus-sdk/debug"]
 reputation = []
+achievements = []
 
 [lib]
 crate-type = ["lib", "cdylib"]
