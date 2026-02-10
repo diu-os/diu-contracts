@@ -5,3 +5,21 @@ target/
 *.swp
 *.swo
 .DS_Store
+
+# Keys & secrets
+*.pem
+*.key
+*.p12
+private_key*
+secret*
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
+
+# OS
+Thumbs.db
+
+# Deployment artifacts (cargo-stylus)
+deployment_tx_hash*
