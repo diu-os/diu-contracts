@@ -24,9 +24,14 @@ debug = ["stylus-sdk/debug"]
 reputation = []
 achievements = []
 token = []
+registry = []
 
 [lib]
 crate-type = ["lib", "cdylib"]
+
+[[bin]]
+name = "diu-contracts"
+path = "src/main.rs"
 
 [profile.release]
 opt-level = "z"

@@ -23,3 +23,4 @@ Thumbs.db
 
 # Deployment artifacts (cargo-stylus)
 deployment_tx_hash*
+deployment_logs/
