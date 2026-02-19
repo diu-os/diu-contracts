@@ -4,7 +4,7 @@ Smart contracts for [DIU OS](https://diu-os.org) — a decentralized Scientific 
 
 Written in **Rust** using [Arbitrum Stylus SDK](https://docs.arbitrum.io/stylus), compiled to WASM, deployed on Arbitrum.
 
-> Built with AI-assisted development (Claude Code) — architecture and review by [Barust](https://github.com/barust)
+> Architecture and review by [Barust](https://github.com/barust)
 
 ## Contracts
 
