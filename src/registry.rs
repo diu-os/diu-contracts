@@ -16,6 +16,9 @@ use stylus_sdk::{
 // ═══════════════════════════════════════════════════════════════════════════
 
 sol! {
+    /// Emitted when the contract is initialized.
+    event Initialized(address indexed owner);
+
     /// Emitted when a new user registers.
     event UserRegistered(address indexed user, string metadata_uri);
 
@@ -47,6 +50,7 @@ sol! {
     error AlreadyVerified();
     error OrcidAlreadyLinked();
     error ZeroAddress();
+    error AlreadyInitialized();
 }
 
 /// Contract-level error type for DIURegistry.
@@ -59,6 +63,7 @@ pub enum RegistryError {
     AlreadyVerified(AlreadyVerified),
     OrcidAlreadyLinked(OrcidAlreadyLinked),
     ZeroAddress(ZeroAddress),
+    AlreadyInitialized(AlreadyInitialized),
 }
 
 impl core::fmt::Debug for RegistryError {
@@ -71,6 +76,7 @@ impl core::fmt::Debug for RegistryError {
             Self::AlreadyVerified(_) => write!(f, "AlreadyVerified"),
             Self::OrcidAlreadyLinked(_) => write!(f, "OrcidAlreadyLinked"),
             Self::ZeroAddress(_) => write!(f, "ZeroAddress"),
+            Self::AlreadyInitialized(_) => write!(f, "AlreadyInitialized"),
         }
     }
 }
@@ -84,6 +90,9 @@ sol_storage! {
     pub struct DIURegistry {
         /// Contract owner (set at deployment via constructor).
         address owner;
+
+        /// Whether the contract has been initialized.
+        bool initialized;
 
         /// Addresses with admin privileges.
         mapping(address => bool) admins;
@@ -143,24 +152,30 @@ impl DIURegistry {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CONSTRUCTOR
-// ═══════════════════════════════════════════════════════════════════════════
-
-impl DIURegistry {
-    /// Initializes the contract with the deployer as owner and admin.
-    pub fn constructor(&mut self) {
-        let deployer = self.vm().tx_origin();
-        self.owner.set(deployer);
-        self.admins.setter(deployer).set(true);
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
 // PUBLIC INTERFACE
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[public]
 impl DIURegistry {
+    // ─── Initialization ──────────────────────────────────────────────
+
+    /// Initialize the contract. Can only be called once.
+    ///
+    /// Sets the caller as owner and grants initial admin role.
+    pub fn initialize(&mut self) -> Result<(), RegistryError> {
+        if self.initialized.get() {
+            return Err(RegistryError::AlreadyInitialized(AlreadyInitialized {}));
+        }
+
+        let caller = self.vm().msg_sender();
+        self.owner.set(caller);
+        self.admins.setter(caller).set(true);
+        self.initialized.set(true);
+
+        self.vm().log(Initialized { owner: caller });
+        Ok(())
+    }
+
     // ─── Write Functions ─────────────────────────────────────────────
 
     /// Register a new user account with the given metadata URI.
@@ -350,28 +365,50 @@ mod tests {
     fn setup() -> (TestVM, DIURegistry) {
         let vm = TestVMBuilder::new().sender(OWNER).build();
         let mut contract = DIURegistry::from(&vm);
-        contract.constructor();
+        contract.initialize().unwrap();
         (vm, contract)
     }
 
-    // ─── Constructor ─────────────────────────────────────────────────
+    // ─── Initialization ──────────────────────────────────────────────
 
     #[test]
-    fn test_constructor_sets_owner() {
+    fn test_initialize_sets_owner() {
         let (_, contract) = setup();
         assert_eq!(contract.owner(), OWNER);
     }
 
     #[test]
-    fn test_constructor_grants_admin() {
+    fn test_initialize_grants_admin() {
         let (_, contract) = setup();
         assert!(contract.is_admin(OWNER));
     }
 
     #[test]
-    fn test_constructor_starts_empty() {
+    fn test_initialize_starts_empty() {
         let (_, contract) = setup();
         assert_eq!(contract.total_users(), U256::ZERO);
+    }
+
+    #[test]
+    fn test_initialize_twice_reverts() {
+        let vm = TestVMBuilder::new().sender(OWNER).build();
+        let mut contract = DIURegistry::from(&vm);
+        contract.initialize().unwrap();
+
+        let result = contract.initialize();
+        assert!(matches!(result, Err(RegistryError::AlreadyInitialized(_))));
+    }
+
+    #[test]
+    fn test_initialize_sets_initialized() {
+        let vm = TestVMBuilder::new().sender(OWNER).build();
+        let mut contract = DIURegistry::from(&vm);
+
+        contract.initialize().unwrap();
+
+        // Verify by trying to initialize again
+        let result = contract.initialize();
+        assert!(matches!(result, Err(RegistryError::AlreadyInitialized(_))));
     }
 
     // ─── register_user ───────────────────────────────────────────────

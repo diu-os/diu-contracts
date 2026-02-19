@@ -23,6 +23,9 @@ const DECIMALS: u8 = 18;
 // ═══════════════════════════════════════════════════════════════════════════
 
 sol! {
+    /// Emitted when the contract is initialized.
+    event Initialized(address indexed owner);
+
     /// ERC-20 standard Transfer event (from=0x0 on mint, to=0x0 on burn).
     event Transfer(address indexed from, address indexed to, uint256 value);
 
@@ -60,6 +63,7 @@ sol! {
     error InsufficientAllowance();
     error ContractPaused();
     error ContractNotPaused();
+    error AlreadyInitialized();
 }
 
 /// Contract-level error type for DIUToken.
@@ -72,6 +76,7 @@ pub enum TokenError {
     InsufficientAllowance(InsufficientAllowance),
     ContractPaused(ContractPaused),
     ContractNotPaused(ContractNotPaused),
+    AlreadyInitialized(AlreadyInitialized),
 }
 
 impl core::fmt::Debug for TokenError {
@@ -84,6 +89,7 @@ impl core::fmt::Debug for TokenError {
             Self::InsufficientAllowance(_) => write!(f, "InsufficientAllowance"),
             Self::ContractPaused(_) => write!(f, "ContractPaused"),
             Self::ContractNotPaused(_) => write!(f, "ContractNotPaused"),
+            Self::AlreadyInitialized(_) => write!(f, "AlreadyInitialized"),
         }
     }
 }
@@ -97,6 +103,9 @@ sol_storage! {
     pub struct DIUToken {
         /// Contract owner (set at deployment).
         address owner;
+
+        /// Whether the contract has been initialized.
+        bool initialized;
 
         /// Addresses with admin privileges (can pause/unpause).
         mapping(address => bool) admins;
@@ -193,25 +202,31 @@ impl DIUToken {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CONSTRUCTOR
-// ═══════════════════════════════════════════════════════════════════════════
-
-impl DIUToken {
-    /// Initializes the contract with the deployer as owner, admin, and authorized.
-    pub fn constructor(&mut self) {
-        let deployer = self.vm().tx_origin();
-        self.owner.set(deployer);
-        self.admins.setter(deployer).set(true);
-        self.authorized.setter(deployer).set(true);
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
 // PUBLIC INTERFACE
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[public]
 impl DIUToken {
+    // ─── Initialization ──────────────────────────────────────────────
+
+    /// Initialize the contract. Can only be called once.
+    ///
+    /// Sets the caller as owner and grants initial admin and authorized roles.
+    pub fn initialize(&mut self) -> Result<(), TokenError> {
+        if self.initialized.get() {
+            return Err(TokenError::AlreadyInitialized(AlreadyInitialized {}));
+        }
+
+        let caller = self.vm().msg_sender();
+        self.owner.set(caller);
+        self.admins.setter(caller).set(true);
+        self.authorized.setter(caller).set(true);
+        self.initialized.set(true);
+
+        self.vm().log(Initialized { owner: caller });
+        Ok(())
+    }
+
     // ─── ERC-20 Write Functions ──────────────────────────────────────
 
     /// Transfer tokens to another address.
@@ -511,7 +526,7 @@ mod tests {
     fn setup() -> (TestVM, DIUToken) {
         let vm = TestVMBuilder::new().sender(OWNER).build();
         let mut contract = DIUToken::from(&vm);
-        contract.constructor();
+        contract.initialize().unwrap();
         (vm, contract)
     }
 
@@ -522,34 +537,34 @@ mod tests {
         (vm, contract)
     }
 
-    // ─── Constructor ─────────────────────────────────────────────────
+    // ─── Initialization ──────────────────────────────────────────────
 
     #[test]
-    fn test_constructor_sets_owner() {
+    fn test_initialize_sets_owner() {
         let (_, contract) = setup();
         assert_eq!(contract.owner(), OWNER);
     }
 
     #[test]
-    fn test_constructor_owner_is_admin() {
+    fn test_initialize_owner_is_admin() {
         let (_, contract) = setup();
         assert!(contract.is_admin(OWNER));
     }
 
     #[test]
-    fn test_constructor_owner_is_authorized() {
+    fn test_initialize_owner_is_authorized() {
         let (_, contract) = setup();
         assert!(contract.is_authorized(OWNER));
     }
 
     #[test]
-    fn test_constructor_starts_unpaused() {
+    fn test_initialize_starts_unpaused() {
         let (_, contract) = setup();
         assert!(!contract.is_paused());
     }
 
     #[test]
-    fn test_constructor_zero_supply() {
+    fn test_initialize_zero_supply() {
         let (_, contract) = setup();
         assert_eq!(contract.total_supply(), U256::ZERO);
     }
@@ -560,6 +575,28 @@ mod tests {
         assert_eq!(contract.name(), "DIU Token");
         assert_eq!(contract.symbol(), "DIU");
         assert_eq!(contract.decimals(), 18);
+    }
+
+    #[test]
+    fn test_initialize_twice_reverts() {
+        let vm = TestVMBuilder::new().sender(OWNER).build();
+        let mut contract = DIUToken::from(&vm);
+        contract.initialize().unwrap();
+
+        let result = contract.initialize();
+        assert!(matches!(result, Err(TokenError::AlreadyInitialized(_))));
+    }
+
+    #[test]
+    fn test_initialize_sets_initialized() {
+        let vm = TestVMBuilder::new().sender(OWNER).build();
+        let mut contract = DIUToken::from(&vm);
+
+        contract.initialize().unwrap();
+
+        // Verify by trying to initialize again
+        let result = contract.initialize();
+        assert!(matches!(result, Err(TokenError::AlreadyInitialized(_))));
     }
 
     // ─── mint ────────────────────────────────────────────────────────

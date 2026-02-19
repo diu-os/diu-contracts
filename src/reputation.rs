@@ -36,6 +36,9 @@ const LEVEL_THRESHOLDS: [(u64, u8); 5] = [
 // ═══════════════════════════════════════════════════════════════════════════
 
 sol! {
+    /// Emitted when the contract is initialized.
+    event Initialized(address indexed owner);
+
     /// Emitted when XP is awarded to a user.
     event XpAwarded(address indexed user, uint256 amount, uint256 total_xp);
 
@@ -61,6 +64,7 @@ sol! {
     error ZeroAddress();
     error ZeroAmount();
     error AlreadyLoggedInToday();
+    error AlreadyInitialized();
 }
 
 /// Contract-level error type for DIUReputation.
@@ -70,6 +74,7 @@ pub enum ReputationError {
     ZeroAddress(ZeroAddress),
     ZeroAmount(ZeroAmount),
     AlreadyLoggedInToday(AlreadyLoggedInToday),
+    AlreadyInitialized(AlreadyInitialized),
 }
 
 impl core::fmt::Debug for ReputationError {
@@ -79,6 +84,7 @@ impl core::fmt::Debug for ReputationError {
             Self::ZeroAddress(_) => write!(f, "ZeroAddress"),
             Self::ZeroAmount(_) => write!(f, "ZeroAmount"),
             Self::AlreadyLoggedInToday(_) => write!(f, "AlreadyLoggedInToday"),
+            Self::AlreadyInitialized(_) => write!(f, "AlreadyInitialized"),
         }
     }
 }
@@ -92,6 +98,9 @@ sol_storage! {
     pub struct DIUReputation {
         /// Contract owner (set at deployment).
         address owner;
+
+        /// Whether the contract has been initialized.
+        bool initialized;
 
         /// Authorized backend addresses that can award XP and record logins.
         mapping(address => bool) authorized;
@@ -188,24 +197,30 @@ impl DIUReputation {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CONSTRUCTOR
-// ═══════════════════════════════════════════════════════════════════════════
-
-impl DIUReputation {
-    /// Initializes the contract with the deployer as owner and authorized.
-    pub fn constructor(&mut self) {
-        let deployer = self.vm().tx_origin();
-        self.owner.set(deployer);
-        self.authorized.setter(deployer).set(true);
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
 // PUBLIC INTERFACE
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[public]
 impl DIUReputation {
+    // ─── Initialization ──────────────────────────────────────────────
+
+    /// Initialize the contract. Can only be called once.
+    ///
+    /// Sets the caller as owner and grants initial authorized role.
+    pub fn initialize(&mut self) -> Result<(), ReputationError> {
+        if self.initialized.get() {
+            return Err(ReputationError::AlreadyInitialized(AlreadyInitialized {}));
+        }
+
+        let caller = self.vm().msg_sender();
+        self.owner.set(caller);
+        self.authorized.setter(caller).set(true);
+        self.initialized.set(true);
+
+        self.vm().log(Initialized { owner: caller });
+        Ok(())
+    }
+
     // ─── Write Functions (Authorized Only) ───────────────────────────
 
     /// Award XP to a user. Authorized callers only.
@@ -408,7 +423,7 @@ mod tests {
     fn setup() -> (TestVM, DIUReputation) {
         let vm = TestVMBuilder::new().sender(OWNER).build();
         let mut contract = DIUReputation::from(&vm);
-        contract.constructor();
+        contract.initialize().unwrap();
         (vm, contract)
     }
 
@@ -420,25 +435,47 @@ mod tests {
         (vm, contract)
     }
 
-    // ─── Constructor ─────────────────────────────────────────────────
+    // ─── Initialization ──────────────────────────────────────────────
 
     #[test]
-    fn test_constructor_sets_owner() {
+    fn test_initialize_sets_owner() {
         let (_, contract) = setup();
         assert_eq!(contract.owner(), OWNER);
     }
 
     #[test]
-    fn test_constructor_owner_is_authorized() {
+    fn test_initialize_owner_is_authorized() {
         let (_, contract) = setup();
         assert!(contract.is_authorized(OWNER));
     }
 
     #[test]
-    fn test_constructor_starts_empty() {
+    fn test_initialize_starts_empty() {
         let (_, contract) = setup();
         assert_eq!(contract.total_xp_awarded(), U256::ZERO);
         assert_eq!(contract.total_users(), U256::ZERO);
+    }
+
+    #[test]
+    fn test_initialize_twice_reverts() {
+        let vm = TestVMBuilder::new().sender(OWNER).build();
+        let mut contract = DIUReputation::from(&vm);
+        contract.initialize().unwrap();
+
+        let result = contract.initialize();
+        assert!(matches!(result, Err(ReputationError::AlreadyInitialized(_))));
+    }
+
+    #[test]
+    fn test_initialize_sets_initialized() {
+        let vm = TestVMBuilder::new().sender(OWNER).build();
+        let mut contract = DIUReputation::from(&vm);
+
+        contract.initialize().unwrap();
+
+        // Verify by trying to initialize again
+        let result = contract.initialize();
+        assert!(matches!(result, Err(ReputationError::AlreadyInitialized(_))));
     }
 
     // ─── add_xp ─────────────────────────────────────────────────────

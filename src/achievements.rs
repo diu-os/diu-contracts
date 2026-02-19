@@ -18,6 +18,9 @@ use stylus_sdk::{
 // ═══════════════════════════════════════════════════════════════════════════
 
 sol! {
+    /// Emitted when the contract is initialized.
+    event Initialized(address indexed owner);
+
     /// ERC-721 standard Transfer event (from=0x0 on mint).
     event Transfer(address indexed from, address indexed to, uint256 indexed token_id);
 
@@ -47,6 +50,7 @@ sol! {
     error AchievementAlreadyEarned();
     error EmptyString();
     error Soulbound();
+    error AlreadyInitialized();
 }
 
 /// Contract-level error type for DIUAchievements.
@@ -58,6 +62,7 @@ pub enum AchievementsError {
     AchievementAlreadyEarned(AchievementAlreadyEarned),
     EmptyString(EmptyString),
     Soulbound(Soulbound),
+    AlreadyInitialized(AlreadyInitialized),
 }
 
 impl core::fmt::Debug for AchievementsError {
@@ -69,6 +74,7 @@ impl core::fmt::Debug for AchievementsError {
             Self::AchievementAlreadyEarned(_) => write!(f, "AchievementAlreadyEarned"),
             Self::EmptyString(_) => write!(f, "EmptyString"),
             Self::Soulbound(_) => write!(f, "Soulbound"),
+            Self::AlreadyInitialized(_) => write!(f, "AlreadyInitialized"),
         }
     }
 }
@@ -82,6 +88,9 @@ sol_storage! {
     pub struct DIUAchievements {
         /// Contract owner (set at deployment).
         address owner;
+
+        /// Whether the contract has been initialized.
+        bool initialized;
 
         /// Authorized backend addresses that can mint achievements.
         mapping(address => bool) authorized;
@@ -158,26 +167,31 @@ impl DIUAchievements {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CONSTRUCTOR
-// ═══════════════════════════════════════════════════════════════════════════
-
-impl DIUAchievements {
-    /// Initializes the contract with the deployer as owner and authorized.
-    /// Token IDs start at 1.
-    pub fn constructor(&mut self) {
-        let deployer = self.vm().tx_origin();
-        self.owner.set(deployer);
-        self.authorized.setter(deployer).set(true);
-        self.next_token_id.set(U256::from(1));
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
 // PUBLIC INTERFACE
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[public]
 impl DIUAchievements {
+    // ─── Initialization ──────────────────────────────────────────────
+
+    /// Initialize the contract. Can only be called once.
+    ///
+    /// Sets the caller as owner, grants initial authorized role, and starts token IDs at 1.
+    pub fn initialize(&mut self) -> Result<(), AchievementsError> {
+        if self.initialized.get() {
+            return Err(AchievementsError::AlreadyInitialized(AlreadyInitialized {}));
+        }
+
+        let caller = self.vm().msg_sender();
+        self.owner.set(caller);
+        self.authorized.setter(caller).set(true);
+        self.next_token_id.set(U256::from(1));
+        self.initialized.set(true);
+
+        self.vm().log(Initialized { owner: caller });
+        Ok(())
+    }
+
     // ─── Mint (Authorized Only) ──────────────────────────────────────
 
     /// Mint an achievement NFT to a user. Authorized callers only.
@@ -427,7 +441,7 @@ mod tests {
     fn setup() -> (TestVM, DIUAchievements) {
         let vm = TestVMBuilder::new().sender(OWNER).build();
         let mut contract = DIUAchievements::from(&vm);
-        contract.constructor();
+        contract.initialize().unwrap();
         (vm, contract)
     }
 
@@ -439,31 +453,53 @@ mod tests {
         (vm, contract)
     }
 
-    // ─── Constructor ─────────────────────────────────────────────────
+    // ─── Initialization ──────────────────────────────────────────────
 
     #[test]
-    fn test_constructor_sets_owner() {
+    fn test_initialize_sets_owner() {
         let (_, contract) = setup();
         assert_eq!(contract.owner(), OWNER);
     }
 
     #[test]
-    fn test_constructor_owner_is_authorized() {
+    fn test_initialize_owner_is_authorized() {
         let (_, contract) = setup();
         assert!(contract.is_authorized(OWNER));
     }
 
     #[test]
-    fn test_constructor_starts_empty() {
+    fn test_initialize_starts_empty() {
         let (_, contract) = setup();
         assert_eq!(contract.total_supply(), U256::ZERO);
     }
 
     #[test]
-    fn test_constructor_name_and_symbol() {
+    fn test_initialize_name_and_symbol() {
         let (_, contract) = setup();
         assert_eq!(contract.name(), "DIU Achievements");
         assert_eq!(contract.symbol(), "DIUA");
+    }
+
+    #[test]
+    fn test_initialize_twice_reverts() {
+        let vm = TestVMBuilder::new().sender(OWNER).build();
+        let mut contract = DIUAchievements::from(&vm);
+        contract.initialize().unwrap();
+
+        let result = contract.initialize();
+        assert!(matches!(result, Err(AchievementsError::AlreadyInitialized(_))));
+    }
+
+    #[test]
+    fn test_initialize_sets_initialized() {
+        let vm = TestVMBuilder::new().sender(OWNER).build();
+        let mut contract = DIUAchievements::from(&vm);
+
+        contract.initialize().unwrap();
+
+        // Verify by trying to initialize again
+        let result = contract.initialize();
+        assert!(matches!(result, Err(AchievementsError::AlreadyInitialized(_))));
     }
 
     // ─── mint ────────────────────────────────────────────────────────
