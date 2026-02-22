@@ -1,11 +1,15 @@
 # 🔐 DIU OS Smart Contracts — Security Audit
 ## Current Security Status and Recommendations
 
-**Version**: 1.0  
-**Date**: February 10, 2026  
-**Status**: Pre-Audit (internal review)  
-**Reviewer**: Barust + Claude Code  
-**Next**: External audit after testnet deployment
+**Version**: 1.1
+**Date**: February 22, 2026
+**Status**: Pre-Audit (internal review) — testnet deployed, pending Kirill review
+**Reviewer**: Barust + Claude Code
+**Next**: Security review with Kirill Taran → external audit firm selection (P-009)
+
+**Changelog**:
+- v1.1 (22 Feb 2026): updated after redeployment with `initialize()` pattern; 147 tests
+- v1.0 (10 Feb 2026): initial internal review
 
 ---
 
@@ -662,10 +666,10 @@ Track after mainnet deploy:
 ---
 
 **This document is living**. Update after:
-- Testnet deploy (February 2026)
-- Security review with Kirill (March 2026)
+- ~~Testnet deploy (February 2026)~~ ✅ Done — redeployed 19 Feb 2026 with `initialize()`
+- Security review with Kirill (March 2026) ← next
 - External audit report (May 2026)
 - Bug bounty results (June-Dec 2026)
 
-*Version 1.0 | February 10, 2026*  
-*Next Review: Post-testnet deploy*
+*Version 1.1 | February 22, 2026*
+*Next Review: After Kirill security review (P-005..P-009)*
