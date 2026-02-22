@@ -12,12 +12,12 @@ Four Phase 1 contracts, each deployed as an independent WASM module via Cargo fe
 
 | Contract | File | Purpose | Tests | WASM |
 |----------|------|---------|-------|------|
-| **DIURegistry** | `src/registry.rs` | User identity, ORCID linking, researcher verification | 26 | 20.9 KB |
-| **DIUReputation** | `src/reputation.rs` | XP tracking, levels, daily login streaks, leaderboard | 34 | 19.7 KB |
-| **DIUAchievements** | `src/achievements.rs` | Soulbound ERC-721 NFT badges and certificates | 32 | 22.9 KB |
-| **DIUToken** | `src/token.rs` | ERC-20 platform token with restricted mint and pause | 47 | 17.3 KB |
+| **DIURegistry** | `src/registry.rs` | User identity, ORCID linking, researcher verification | 28 | 21.3 KB |
+| **DIUReputation** | `src/reputation.rs` | XP tracking, levels, daily login streaks, leaderboard | 36 | 20.0 KB |
+| **DIUAchievements** | `src/achievements.rs` | Soulbound ERC-721 NFT badges and certificates | 34 | 23.2 KB |
+| **DIUToken** | `src/token.rs` | ERC-20 platform token with restricted mint and pause | 49 | 17.7 KB |
 
-**Total: 139 tests, 0 clippy warnings.**
+**Total: 147 tests, 0 clippy warnings.**
 
 ## Architecture
 
@@ -47,7 +47,7 @@ cargo install cargo-stylus
 ## Build & Test
 
 ```bash
-# Run all 139 tests
+# Run all 147 tests
 cargo test
 
 # Lint (strict, zero warnings)
