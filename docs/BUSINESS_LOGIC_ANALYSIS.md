@@ -1,9 +1,13 @@
 # 🏗️ DIU OS — Complete Smart Contracts Business Logic Analysis
 ## Comprehensive Explanation of Business Logic and Architectural Relationships
 
-**Version**: 1.0  
-**Date**: February 10, 2026  
+**Version**: 1.1
+**Date**: February 22, 2026
 **Purpose**: Reference document for developers, investors, and technical documentation
+
+**Changelog**:
+- v1.1 (22 Feb 2026): updated after redeployment with `initialize()` pattern; 147 tests
+- v1.0 (10 Feb 2026): initial analysis
 
 ---
 
@@ -809,10 +813,10 @@ Break-even: ~2000 active users with 20% premium conversion
 ---
 
 **This document is a living reference** and will be updated as:
-- Testnet deployment (February 2026)
-- Security review with Kirill (March 2026)
+- ~~Testnet deployment (February 2026)~~ ✅ Done — redeployed 19 Feb 2026 with `initialize()`
+- Security review with Kirill (March 2026) ← next
 - External audit (May 2026)
 - Mainnet launch (June 2026)
 
-*Version 1.0 | February 10, 2026*  
+*Version 1.1 | February 22, 2026*
 *Authors: Barust + Claude Code*
