@@ -187,6 +187,79 @@ DIU OS is part of a larger ecosystem:
 
 **Live MVP**: [physics.diu-os.org](https://physics.diu-os.org)
 
+## Testing on Arbitrum Sepolia
+
+### Prerequisites
+
+```bash
+# foundry/cast for on-chain read/write calls
+curl -L https://foundry.paradigm.xyz | bash
+foundryup
+```
+
+Sepolia ETH для write-операций: https://faucet.triangleplatform.com/arbitrum/sepolia
+
+### Deployed Contracts (19 Feb 2026)
+
+| Contract | Address |
+|----------|---------|
+| DIURegistry | `0x49e1b11e1037e74113a7c0ccc41e3042d4691018` |
+| DIUReputation | `0x8740f9d110133ff5efa0fb562e62ab92a466cdc5` |
+| DIUAchievements | `0x1a9783ba7966c0e7299af7ee2228e19028d8ea7e` |
+| DIUToken | `0xbbd9a558c049482f1be45399fec4a4c9dc1c810e` |
+
+Deployer: `0x67bB4D1895D9A736F9e6076529B468ba05aeD150`
+
+### Quick Verification (read-only)
+
+```bash
+export RPC="https://sepolia-rollup.arbitrum.io/rpc"
+export REGISTRY="0x49e1b11e1037e74113a7c0ccc41e3042d4691018"
+export REPUTATION="0x8740f9d110133ff5efa0fb562e62ab92a466cdc5"
+export ACHIEVEMENTS="0x1a9783ba7966c0e7299af7ee2228e19028d8ea7e"
+export TOKEN="0xbbd9a558c049482f1be45399fec4a4c9dc1c810e"
+
+# DIURegistry — owner, total registered users
+cast call $REGISTRY "owner()(address)" --rpc-url $RPC
+cast call $REGISTRY "totalUsers()(uint256)" --rpc-url $RPC
+
+# DIUReputation — owner
+cast call $REPUTATION "owner()(address)" --rpc-url $RPC
+
+# DIUAchievements — owner, total minted tokens
+cast call $ACHIEVEMENTS "owner()(address)" --rpc-url $RPC
+
+# DIUToken — name, symbol, total supply
+cast call $TOKEN "name()(string)" --rpc-url $RPC
+cast call $TOKEN "symbol()(string)" --rpc-url $RPC
+cast call $TOKEN "totalSupply()(uint256)" --rpc-url $RPC
+```
+
+### Arbiscan Links
+
+| Contract | Explorer |
+|----------|---------|
+| DIURegistry | https://sepolia.arbiscan.io/address/0x49e1b11e1037e74113a7c0ccc41e3042d4691018 |
+| DIUReputation | https://sepolia.arbiscan.io/address/0x8740f9d110133ff5efa0fb562e62ab92a466cdc5 |
+| DIUAchievements | https://sepolia.arbiscan.io/address/0x1a9783ba7966c0e7299af7ee2228e19028d8ea7e |
+| DIUToken | https://sepolia.arbiscan.io/address/0xbbd9a558c049482f1be45399fec4a4c9dc1c810e |
+
+### Running Local Tests
+
+```bash
+# All tests
+cargo test
+
+# Strict lint (zero warnings required)
+cargo clippy -- -D warnings
+
+# WASM check per contract (requires RPC)
+cargo stylus check --features registry     --endpoint https://sepolia-rollup.arbitrum.io/rpc
+cargo stylus check --features reputation   --endpoint https://sepolia-rollup.arbitrum.io/rpc
+cargo stylus check --features achievements --endpoint https://sepolia-rollup.arbitrum.io/rpc
+cargo stylus check --features token        --endpoint https://sepolia-rollup.arbitrum.io/rpc
+```
+
 ## License
 
 MIT
