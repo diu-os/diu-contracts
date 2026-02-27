@@ -25,6 +25,7 @@ reputation = []
 achievements = []
 token = []
 registry = []
+progress = []
 
 [lib]
 crate-type = ["lib", "cdylib"]

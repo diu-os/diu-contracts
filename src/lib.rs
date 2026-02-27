@@ -21,3 +21,8 @@ pub mod achievements;
 /// Use `--features token` to build as WASM entrypoint.
 #[cfg(any(test, feature = "token"))]
 pub mod token;
+
+/// DIUProgress — simulation runs, module completions, XP cross-contract awards.
+/// Use `--features progress` to build as WASM entrypoint.
+#[cfg(any(test, feature = "progress"))]
+pub mod progress;
