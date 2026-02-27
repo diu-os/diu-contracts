@@ -8,7 +8,7 @@ Written in **Rust** using [Arbitrum Stylus SDK](https://docs.arbitrum.io/stylus)
 
 ## Contracts
 
-Four Phase 1 contracts, each deployed as an independent WASM module via Cargo feature flags.
+Five contracts, each deployed as an independent WASM module via Cargo feature flags.
 
 | Contract | File | Purpose | Tests | WASM |
 |----------|------|---------|-------|------|
@@ -16,8 +16,9 @@ Four Phase 1 contracts, each deployed as an independent WASM module via Cargo fe
 | **DIUReputation** | `src/reputation.rs` | XP tracking, levels, daily login streaks, leaderboard | 36 | 20.0 KB |
 | **DIUAchievements** | `src/achievements.rs` | Soulbound ERC-721 NFT badges and certificates | 34 | 23.2 KB |
 | **DIUToken** | `src/token.rs` | ERC-20 platform token with restricted mint and pause | 49 | 17.7 KB |
+| **DIUProgress** | `src/progress.rs` | Simulation tracking, module completions, XP cross-contract awards | 24 | 19.0 KB |
 
-**Total: 147 tests, 0 clippy warnings.**
+**Total: 171 tests, 0 clippy warnings.**
 
 ## Architecture
 
@@ -32,6 +33,17 @@ Four Phase 1 contracts, each deployed as an independent WASM module via Cargo fe
                           │                                       │
                           └───────────────────────────────────────┘
                                   DIUReputation → DIUToken.mint
+
+┌─────────────────────────────────────────────────┐
+│ DIUProgress                                     │
+│─────────────────────────────────────────────────│
+│ Simulation runs & best scores (experiments 0–N) │
+│ Module completion tracking                      │
+│ Data export snapshot (ADR D-019, Research Mode) │
+└──────────────────────┬──────────────────────────┘
+                       │ addXp (cross-contract)
+                       ▼
+               DIUReputation
 ```
 
 ## Prerequisites
@@ -47,17 +59,18 @@ cargo install cargo-stylus
 ## Build & Test
 
 ```bash
-# Run all 147 tests
+# Run all 171 tests
 cargo test
 
 # Lint (strict, zero warnings)
 cargo clippy -- -D warnings
 
 # Check WASM compilation for a specific contract
-cargo stylus check --endpoint https://sepolia-rollup.arbitrum.io/rpc                     # DIURegistry (default)
-cargo stylus check --features reputation --endpoint https://sepolia-rollup.arbitrum.io/rpc    # DIUReputation
+cargo stylus check --endpoint https://sepolia-rollup.arbitrum.io/rpc                      # DIURegistry (default)
+cargo stylus check --features reputation   --endpoint https://sepolia-rollup.arbitrum.io/rpc  # DIUReputation
 cargo stylus check --features achievements --endpoint https://sepolia-rollup.arbitrum.io/rpc  # DIUAchievements
-cargo stylus check --features token --endpoint https://sepolia-rollup.arbitrum.io/rpc         # DIUToken
+cargo stylus check --features token        --endpoint https://sepolia-rollup.arbitrum.io/rpc  # DIUToken
+cargo stylus check --features progress     --endpoint https://sepolia-rollup.arbitrum.io/rpc  # DIUProgress
 ```
 
 ## Feature-Gated Builds
@@ -69,10 +82,11 @@ Each contract has its own `#[entrypoint]` — only one is active per WASM build.
 reputation = []
 achievements = []
 token = []
+progress = []
 # default (no feature) = DIURegistry
 ```
 
-All contracts compile together in test mode (`cargo test` runs all 139 tests).
+All contracts compile together in test mode (`cargo test` runs all 171 tests).
 
 ## Contract Details
 
@@ -130,6 +144,30 @@ ERC-20 platform token with restricted minting, public burning, and admin pause.
 | `approve(spender, amount)` | token holder | ERC-20 standard (infinite allowance supported) |
 | `pause()` / `unpause()` | admin | Block all transfers, mints, burns |
 
+### DIUProgress
+
+Simulation run tracking and learning module completions with cross-contract XP awards. Implements the data export hook mandated by ADR D-019 (Simulation-First Research Loop) for Research Mode.
+
+| Function | Access | Description |
+|----------|--------|-------------|
+| `initialize(reputation, max_exp, max_mod)` | deployer (once) | Set owner, reputation contract address, and ID bounds |
+| `record_simulation(user, experiment_id, score)` | authorized | Record run, award XP, update best score |
+| `record_module_completion(user, module_id)` | authorized | Mark module done, award 100 XP (idempotent guard) |
+| `set_reputation_contract(address)` | owner | Update DIUReputation address (redeploy support) |
+| `get_progress_summary(user)` | view | `(total_sims, experiments_completed, modules_completed)` |
+| `get_experiment_stats(user, experiment_id)` | view | `(run_count, best_score, is_completed)` |
+| `get_export_snapshot(user)` | view | Full parallel arrays for data export (ADR D-019) |
+
+**XP schedule**:
+- Any run: **50 XP** (base)
+- Perfect score (100): **+50 XP**
+- First completion of experiment: **+25 XP**
+- Module completed: **100 XP**
+
+**Cross-contract**: calls `DIUReputation.addXp`. Non-reverting — if the call fails, emits `XpCallFailed` for backend retry. Pass `Address::ZERO` as `reputation_contract` to disable (test/stub mode).
+
+**Data export (ADR D-019)**: `SimulationRecorded` events carry all params for JSON/CSV indexing; `get_export_snapshot(user)` returns `(run_counts[], best_scores[], completed[])` over all experiment IDs in a single eth_call.
+
 ## Security
 
 | Pattern | Implementation |
@@ -146,14 +184,14 @@ ERC-20 platform token with restricted minting, public burning, and admin pause.
 
 ### Phase 1: Foundation — **Complete** ✅
 
-DIURegistry, DIUReputation, DIUAchievements, DIUToken → 4 contracts, 139 tests
+DIURegistry, DIUReputation, DIUAchievements, DIUToken → 4 contracts, 147 tests, deployed 19 Feb 2026
 
-### Phase 2: Extension (Apr–May 2026)
+### Phase 2: Extension — **In Progress** 🔄
 
-| Contract | Purpose |
-|----------|---------|
-| DIUProgress | Learning state, module completion tracking |
-| DIUCrowdfunding | Research funding with milestones and refunds |
+| Contract | Purpose | Status |
+|----------|---------|--------|
+| DIUProgress | Simulation tracking, module completions, XP awards, data export | ✅ deployed 27 Feb 2026 |
+| DIUCrowdfunding | Research funding with milestones and refunds | planned |
 
 ### Phase 3: DAO (2027+)
 
@@ -199,14 +237,15 @@ foundryup
 
 Sepolia ETH для write-операций: https://faucet.triangleplatform.com/arbitrum/sepolia
 
-### Deployed Contracts (19 Feb 2026)
+### Deployed Contracts
 
-| Contract | Address |
-|----------|---------|
-| DIURegistry | `0x49e1b11e1037e74113a7c0ccc41e3042d4691018` |
-| DIUReputation | `0x8740f9d110133ff5efa0fb562e62ab92a466cdc5` |
-| DIUAchievements | `0x1a9783ba7966c0e7299af7ee2228e19028d8ea7e` |
-| DIUToken | `0xbbd9a558c049482f1be45399fec4a4c9dc1c810e` |
+| Contract | Address | Deployed |
+|----------|---------|----------|
+| DIURegistry | `0x49e1b11e1037e74113a7c0ccc41e3042d4691018` | 19 Feb 2026 |
+| DIUReputation | `0x8740f9d110133ff5efa0fb562e62ab92a466cdc5` | 19 Feb 2026 |
+| DIUAchievements | `0x1a9783ba7966c0e7299af7ee2228e19028d8ea7e` | 19 Feb 2026 |
+| DIUToken | `0xbbd9a558c049482f1be45399fec4a4c9dc1c810e` | 19 Feb 2026 |
+| DIUProgress | `0xb1c4edc73aae322f62cda57f84f303761ca3e347` | 27 Feb 2026 |
 
 Deployer: `0x67bB4D1895D9A736F9e6076529B468ba05aeD150`
 
@@ -218,6 +257,7 @@ export REGISTRY="0x49e1b11e1037e74113a7c0ccc41e3042d4691018"
 export REPUTATION="0x8740f9d110133ff5efa0fb562e62ab92a466cdc5"
 export ACHIEVEMENTS="0x1a9783ba7966c0e7299af7ee2228e19028d8ea7e"
 export TOKEN="0xbbd9a558c049482f1be45399fec4a4c9dc1c810e"
+export PROGRESS="0xb1c4edc73aae322f62cda57f84f303761ca3e347"
 
 # DIURegistry — owner, total registered users
 cast call $REGISTRY "owner()(address)" --rpc-url $RPC
@@ -233,6 +273,12 @@ cast call $ACHIEVEMENTS "owner()(address)" --rpc-url $RPC
 cast call $TOKEN "name()(string)" --rpc-url $RPC
 cast call $TOKEN "symbol()(string)" --rpc-url $RPC
 cast call $TOKEN "totalSupply()(uint256)" --rpc-url $RPC
+
+# DIUProgress — owner, reputation contract, bounds
+cast call $PROGRESS "owner()(address)" --rpc-url $RPC
+cast call $PROGRESS "reputationContract()(address)" --rpc-url $RPC
+cast call $PROGRESS "maxExperimentId()(uint256)" --rpc-url $RPC
+cast call $PROGRESS "maxModuleId()(uint256)" --rpc-url $RPC
 ```
 
 ### Arbiscan Links
@@ -243,6 +289,7 @@ cast call $TOKEN "totalSupply()(uint256)" --rpc-url $RPC
 | DIUReputation | https://sepolia.arbiscan.io/address/0x8740f9d110133ff5efa0fb562e62ab92a466cdc5 |
 | DIUAchievements | https://sepolia.arbiscan.io/address/0x1a9783ba7966c0e7299af7ee2228e19028d8ea7e |
 | DIUToken | https://sepolia.arbiscan.io/address/0xbbd9a558c049482f1be45399fec4a4c9dc1c810e |
+| DIUProgress | https://sepolia.arbiscan.io/address/0xb1c4edc73aae322f62cda57f84f303761ca3e347 |
 
 ### Running Local Tests
 
@@ -258,6 +305,7 @@ cargo stylus check --features registry     --endpoint https://sepolia-rollup.arb
 cargo stylus check --features reputation   --endpoint https://sepolia-rollup.arbitrum.io/rpc
 cargo stylus check --features achievements --endpoint https://sepolia-rollup.arbitrum.io/rpc
 cargo stylus check --features token        --endpoint https://sepolia-rollup.arbitrum.io/rpc
+cargo stylus check --features progress     --endpoint https://sepolia-rollup.arbitrum.io/rpc
 ```
 
 ## License
