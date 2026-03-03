@@ -26,6 +26,7 @@ achievements = []
 token = []
 registry = []
 progress = []
+all-contracts = ["registry", "reputation", "achievements", "token", "progress"]
 
 [lib]
 crate-type = ["lib", "cdylib"]

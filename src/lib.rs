@@ -4,7 +4,7 @@ extern crate alloc;
 
 /// DIURegistry — user identity, ORCID linking, verification.
 /// Default entrypoint for WASM builds.
-#[cfg(any(test, not(any(feature = "reputation", feature = "achievements", feature = "token", feature = "progress"))))]
+#[cfg(any(test, feature = "registry", not(any(feature = "reputation", feature = "achievements", feature = "token", feature = "progress"))))]
 pub mod registry;
 
 /// DIUReputation — XP tracking, levels, daily login streaks.
