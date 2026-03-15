@@ -255,12 +255,16 @@ impl DIUReputation {
 
     // ─── Write Functions (Authorized Only) ───────────────────────────
 
-    /// Award XP to a user. Authorized callers only.
+    /// Awards XP to a user with replay protection.
     ///
-    /// XP guide: experiment=100, perfect quiz=50, daily login=10.
+    /// # Nonce
+    /// Caller must read the current nonce via `get_nonce(user)` before calling.
+    /// Each successful call increments the nonce by 1.
+    /// Passing an incorrect nonce returns `InvalidNonce`.
     ///
-    /// `nonce` must equal the current per-user nonce (see `get_nonce`).
-    /// On success, the nonce is incremented to prevent logical replay (ADR D-026).
+    /// # Example (backend flow)
+    /// 1. `nonce = get_nonce(user)`
+    /// 2. `add_xp(user, amount, nonce)`
     pub fn add_xp(
         &mut self,
         user: Address,
