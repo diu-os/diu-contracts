@@ -1,13 +1,14 @@
 # 🔐 DIU OS Smart Contracts — Security Audit
 ## Current Security Status and Recommendations
 
-**Version**: 1.1
-**Date**: February 22, 2026
+**Version**: 1.3
+**Date**: March 15, 2026
 **Status**: Pre-Audit (internal review) — testnet deployed, pending Kirill review
 **Reviewer**: Barust + Claude Code
 **Next**: Security review with Kirill Taran → external audit firm selection (P-009)
 
 **Changelog**:
+- v1.3 (15 Mar 2026): A-2/P-1 marked Accepted Risk (Variant D) — backend enforces, Phase 2 on-chain guard
 - v1.2 (15 Mar 2026): QAT manual security checklist — all 5 contracts (171 tests + 15 fitness)
 - v1.1 (22 Feb 2026): updated after redeployment with `initialize()` pattern; 147 tests
 - v1.0 (10 Feb 2026): initial internal review
@@ -41,7 +42,7 @@
 | # | Пункт | Статус | Детали |
 |---|-------|--------|--------|
 | A-1 | Двойной mint одного badge — отклоняется? | ✅ OK | `mint()` проверяет `self.achieved.getter(user).get(achievement_id)` → `AchievementAlreadyEarned`. Покрыт тестом `test_mint_duplicate_achievement_reverts`. |
-| A-2 | mint без registration в DIURegistry — отклоняется? | ❌ Gap | `mint()` не вызывает `DIURegistry.is_registered()`. Незарегистрированный адрес может получить badge. Нет cross-contract проверки. |
+| A-2 | mint без registration в DIURegistry — отклоняется? | ⚠️ Accepted Risk | **Вариант D (15 Mar 2026)**: cross-contract проверка отложена на Phase 2. Backend enforces registration check before calling `mint()`. On-chain guard (`sol_interface! IRegistry.isRegistered`) будет добавлен вместе с PauseController в Phase 2. |
 | A-3 | tokenURI при отсутствующем IPFS пине — fallback URI? | ❌ Gap | `token_uri()` возвращает сохраненную строку без fallback. Если IPFS pin недоступен — возвращается broken URI. Нет механизма fallback или проверки доступности. |
 
 ### DIUToken
@@ -56,7 +57,7 @@
 
 | # | Пункт | Статус | Детали |
 |---|-------|--------|--------|
-| P-1 | record_simulation() без регистрации пользователя — отклоняется? | ❌ Gap | `record_simulation` проверяет: authorized caller, zero address, bounds, score. Нет проверки `DIURegistry.is_registered(user)`. Аналогично A-2 (DIUAchievements). |
+| P-1 | record_simulation() без регистрации пользователя — отклоняется? | ⚠️ Accepted Risk | **Вариант D (15 Mar 2026)**: аналогично A-2. Cross-contract проверка отложена на Phase 2. Backend enforces registration check before calling `record_simulation()`. On-chain guard будет добавлен вместе с PauseController в Phase 2. |
 | P-2 | XP cross-contract call — что если DIUReputation недоступен? | ⚠️ Проверить | `try_award_xp` non-reverting по дизайну (ADR D-019): emits `XpCallFailed` и продолжает. Симуляция записывается. Нет auto-retry. Если backend не мониторит `XpCallFailed` — XP теряется навсегда. Нужен backend-side watchdog. |
 | P-3 | get_export_snapshot() — только authorized? | ❌ Gap | `get_export_snapshot` — публичная view функция (`&self`) без access control. Любой адрес читает полный прогресс любого пользователя. Privacy concern для Research Mode (GDPR). |
 | P-4 | Address::ZERO как reputation addr = test mode (задокументировано) | ✅ OK | Задокументировано в коде: `/// Address::ZERO = skip cross-contract XP calls (test/stub mode)`. Тесты явно передают `Address::ZERO`. |
@@ -66,14 +67,17 @@
 | Статус | Кол-во | Пункты |
 |--------|--------|--------|
 | ✅ OK | 6 | E-2, A-1, T-1, T-2, P-4 + (login idempotency) |
-| ❌ Gap | 8 | R-1, R-3, E-3, E-4, A-2, A-3, T-3, P-1, P-3 |
-| ⚠️ Проверить | 3 | R-2, E-1, P-2 |
+| ✅ Закрыто (15 Mar) | 3 | R-1 (ORCID uniqueness), P-3 (export ACL), E-1 (overflow) |
+| ⚠️ Accepted Risk (Phase 2) | 2 | A-2, P-1 — backend enforces, on-chain guard в Phase 2 |
+| ❌ Gap (открыто) | 6 | R-3, E-3, E-4, A-3, T-3 + R-2 (Проверить с Кириллом) |
+| ⚠️ Проверить | 2 | R-2, P-2 |
 
 **Приоритеты перед Кириллом**:
-- 🔴 R-1 (ORCID uniqueness) + A-2/P-1 (registration gate) — простые gap, исправляются в 1 сессию
+- ✅ R-1, P-3, E-1 — закрыто (15 Mar 2026, commit 7e22b26)
+- ⚠️ A-2/P-1 — Accepted Risk (Вариант D): backend enforces, Phase 2 on-chain guard с PauseController
 - 🔴 E-3 (replay / nonces) — P-006, ждет решения с Кириллом
-- 🟡 P-3 (export_snapshot без ACL) — privacy decision нужен
-- 🟡 R-2 (verify = admin vs owner) — intentional или нет?
+- 🟡 R-2 (verify = admin vs owner) — intentional, но требует явного подтверждения с Кириллом
+- 🟡 P-2 (XpCallFailed watchdog) — нужен backend-side мониторинг
 
 ---
 
