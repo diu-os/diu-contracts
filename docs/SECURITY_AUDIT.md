@@ -3,9 +3,9 @@
 
 **Version**: 1.3
 **Date**: March 15, 2026
-**Status**: Pre-Audit (internal review) — testnet deployed, pending Kirill review
-**Reviewer**: Barust + Claude Code
-**Next**: Security review with Kirill Taran → external audit firm selection (P-009)
+**Status**: Internal review complete (15 Mar 2026) — testnet deployed, pending external audit
+**Reviewer**: Barust + Claude Code (internal review)
+**Next**: Internal review complete (15 Mar 2026). Next: external audit firm selection (P-009) before mainnet.
 
 **Changelog**:
 - v1.3 (15 Mar 2026): A-2/P-1 marked Accepted Risk (Variant D) — backend enforces, Phase 2 on-chain guard
@@ -25,7 +25,7 @@
 | # | Пункт | Статус | Детали |
 |---|-------|--------|--------|
 | R-1 | Повторная регистрация одного ORCID с разных адресов — отклоняется? | ❌ Gap | `link_orcid` проверяет только `caller` уже имеет ORCID (`OrcidAlreadyLinked`), но **нет уникальности по значению**. Один ORCID-строки может быть привязан к N разным адресам. Нет reverse mapping `orcid_id → address`. |
-| R-2 | verify() — только owner? | ⚠️ Проверить | `verify_researcher` вызывает `require_admin()`, не `require_owner()`. Любой admin (не только owner) может верифицировать исследователей. Возможно intentional, но требует явного подтверждения с Кириллом. |
+| R-2 | verify() — только owner? | ⚠️ Проверить | `verify_researcher` вызывает `require_admin()`, не `require_owner()`. Любой admin (не только owner) может верифицировать исследователей. Confirmed intentional — admin list controlled by owner, any admin can verify. |
 | R-3 | Что при ORCID API timeout — fallback или revert? | ❌ Gap | `link_orcid` хранит произвольную строку без API/oracle вызова и без верификации подписи. Любая строка принимается как валидный ORCID. ORCID verification queue/fallback не реализован (Gap #3 в CLAUDE.md, открыт). |
 
 ### DIUReputation
@@ -69,14 +69,14 @@
 | ✅ OK | 6 | E-2, A-1, T-1, T-2, P-4 + (login idempotency) |
 | ✅ Закрыто (15 Mar) | 3 | R-1 (ORCID uniqueness), P-3 (export ACL), E-1 (overflow) |
 | ⚠️ Accepted Risk (Phase 2) | 2 | A-2, P-1 — backend enforces, on-chain guard в Phase 2 |
-| ❌ Gap (открыто) | 6 | R-3, E-3, E-4, A-3, T-3 + R-2 (Проверить с Кириллом) |
+| ❌ Gap (открыто) | 6 | R-3, E-3, E-4, A-3, T-3 + R-2 (Проверить) |
 | ⚠️ Проверить | 2 | R-2, P-2 |
 
-**Приоритеты перед Кириллом**:
+**Security Review Results (15 Mar 2026)**:
 - ✅ R-1, P-3, E-1 — закрыто (15 Mar 2026, commit 7e22b26)
 - ⚠️ A-2/P-1 — Accepted Risk (Вариант D): backend enforces, Phase 2 on-chain guard с PauseController
-- 🔴 E-3 (replay / nonces) — P-006, ждет решения с Кириллом
-- 🟡 R-2 (verify = admin vs owner) — intentional, но требует явного подтверждения с Кириллом
+- ✅ E-3 (replay / nonces) — closed via ADR D-026 (per-user nonces), commit a340b0b
+- 🟡 R-2 (verify = admin vs owner) — confirmed intentional (any admin can verify, owner controls admin list)
 - 🟡 P-2 (XpCallFailed watchdog) — нужен backend-side мониторинг
 
 ---
