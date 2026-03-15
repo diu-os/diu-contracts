@@ -26,7 +26,7 @@
 |---|-------|--------|--------|
 | R-1 | Повторная регистрация одного ORCID с разных адресов — отклоняется? | ❌ Gap | `link_orcid` проверяет только `caller` уже имеет ORCID (`OrcidAlreadyLinked`), но **нет уникальности по значению**. Один ORCID-строки может быть привязан к N разным адресам. Нет reverse mapping `orcid_id → address`. |
 | R-2 | verify() — только owner? | ⚠️ Проверить | `verify_researcher` вызывает `require_admin()`, не `require_owner()`. Любой admin (не только owner) может верифицировать исследователей. Confirmed intentional — admin list controlled by owner, any admin can verify. |
-| R-3 | Что при ORCID API timeout — fallback или revert? | ❌ Gap | `link_orcid` хранит произвольную строку без API/oracle вызова и без верификации подписи. Любая строка принимается как валидный ORCID. ORCID verification queue/fallback не реализован (Gap #3 в CLAUDE.md, открыт). |
+| R-3 | Что при ORCID API timeout — fallback или revert? | 📋 ADR D-030 | `link_orcid` хранит произвольную строку без API/oracle вызова. ADR D-030 (15 Mar 2026): on-chain format guard `validate_orcid_format` + backend verification queue (pub.orcid.org/v3.0) + PostgreSQL retry queue. `is_verified` флаг устанавливается backend-ом после успешной верификации. Fallback: exponential backoff, max 5 retries. Реализация: Phase 2 (on-chain) + B-1 scope (backend). |
 
 ### DIUReputation
 
@@ -69,7 +69,8 @@
 | ✅ OK | 6 | E-2, A-1, T-1, T-2, P-4 + (login idempotency) |
 | ✅ Закрыто (15 Mar) | 3 | R-1 (ORCID uniqueness), P-3 (export ACL), E-1 (overflow) |
 | ⚠️ Accepted Risk (Phase 2) | 2 | A-2, P-1 — backend enforces, on-chain guard в Phase 2 |
-| ❌ Gap (открыто) | 6 | R-3, E-3, E-4, A-3, T-3 + R-2 (Проверить) |
+| ❌ Gap (открыто) | 5 | E-3, E-4, A-3, T-3, R-2 |
+| 📋 ADR ready | 1 | R-3 (ADR D-030) |
 | ⚠️ Проверить | 2 | R-2, P-2 |
 
 **Security Review Results (15 Mar 2026)**:
