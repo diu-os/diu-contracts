@@ -65,6 +65,8 @@ sol! {
     error ZeroAmount();
     error AlreadyLoggedInToday();
     error AlreadyInitialized();
+    /// XP addition would overflow U256 — should never happen in practice.
+    error ArithmeticOverflow();
 }
 
 /// Contract-level error type for DIUReputation.
@@ -75,6 +77,7 @@ pub enum ReputationError {
     ZeroAmount(ZeroAmount),
     AlreadyLoggedInToday(AlreadyLoggedInToday),
     AlreadyInitialized(AlreadyInitialized),
+    ArithmeticOverflow(ArithmeticOverflow),
 }
 
 impl core::fmt::Debug for ReputationError {
@@ -85,6 +88,7 @@ impl core::fmt::Debug for ReputationError {
             Self::ZeroAmount(_) => write!(f, "ZeroAmount"),
             Self::AlreadyLoggedInToday(_) => write!(f, "AlreadyLoggedInToday"),
             Self::AlreadyInitialized(_) => write!(f, "AlreadyInitialized"),
+            Self::ArithmeticOverflow(_) => write!(f, "ArithmeticOverflow"),
         }
     }
 }
@@ -163,9 +167,18 @@ impl DIUReputation {
     }
 
     /// Internal: add XP to a user, track in user list, emit events.
-    fn internal_add_xp(&mut self, user: Address, amount: U256) {
+    ///
+    /// Uses checked arithmetic — returns `Err(ArithmeticOverflow)` if the
+    /// user XP or global total would exceed U256::MAX (unreachable in practice).
+    fn internal_add_xp(
+        &mut self,
+        user: Address,
+        amount: U256,
+    ) -> Result<(), ReputationError> {
         let old_xp = self.xp.get(user);
-        let new_xp = old_xp + amount;
+        let new_xp = old_xp
+            .checked_add(amount)
+            .ok_or(ReputationError::ArithmeticOverflow(ArithmeticOverflow {}))?;
         self.xp.setter(user).set(new_xp);
 
         // Track user in the list for leaderboard enumeration
@@ -174,9 +187,12 @@ impl DIUReputation {
             self.has_xp_entry.setter(user).set(true);
         }
 
-        // Update global total
+        // Update global total (also checked)
         let total = self.total_xp_awarded.get();
-        self.total_xp_awarded.set(total + amount);
+        let new_total = total
+            .checked_add(amount)
+            .ok_or(ReputationError::ArithmeticOverflow(ArithmeticOverflow {}))?;
+        self.total_xp_awarded.set(new_total);
 
         self.vm().log(XpAwarded {
             user,
@@ -193,6 +209,8 @@ impl DIUReputation {
                 new_level,
             });
         }
+
+        Ok(())
     }
 }
 
@@ -236,7 +254,7 @@ impl DIUReputation {
             return Err(ReputationError::ZeroAmount(ZeroAmount {}));
         }
 
-        self.internal_add_xp(user, amount);
+        self.internal_add_xp(user, amount)?;
         Ok(())
     }
 
@@ -286,7 +304,7 @@ impl DIUReputation {
         });
 
         // Award daily login XP
-        self.internal_add_xp(user, U256::from(DAILY_LOGIN_XP));
+        self.internal_add_xp(user, U256::from(DAILY_LOGIN_XP))?;
 
         Ok(())
     }
@@ -532,6 +550,21 @@ mod tests {
 
         let result = contract.add_xp(ALICE, U256::ZERO);
         assert!(matches!(result, Err(ReputationError::ZeroAmount(_))));
+    }
+
+    #[test]
+    fn test_add_xp_overflow_reverts() {
+        let (_, mut contract) = setup_with_backend();
+
+        // Set XP to U256::MAX by awarding MAX in one call.
+        contract.add_xp(ALICE, U256::MAX).unwrap();
+
+        // Any additional XP must overflow — expect Err.
+        let result = contract.add_xp(ALICE, U256::from(1));
+        assert!(matches!(
+            result,
+            Err(ReputationError::ArithmeticOverflow(_))
+        ));
     }
 
     #[test]

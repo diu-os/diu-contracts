@@ -8,8 +8,72 @@
 **Next**: Security review with Kirill Taran → external audit firm selection (P-009)
 
 **Changelog**:
+- v1.2 (15 Mar 2026): QAT manual security checklist — all 5 contracts (171 tests + 15 fitness)
 - v1.1 (22 Feb 2026): updated after redeployment with `initialize()` pattern; 147 tests
 - v1.0 (10 Feb 2026): initial internal review
+
+---
+
+## 🔎 QAT MANUAL SECURITY CHECKLIST (15 Mar 2026)
+
+> Диагностика по QAT.md §"Ручной Security Checklist". Только анализ — исправления в отдельных тасках.
+> Reviewer: Claude Code (Sonnet 4.6) | Tests: 186/186 ✅ | Clippy: 0 warnings ✅
+
+### DIURegistry
+
+| # | Пункт | Статус | Детали |
+|---|-------|--------|--------|
+| R-1 | Повторная регистрация одного ORCID с разных адресов — отклоняется? | ❌ Gap | `link_orcid` проверяет только `caller` уже имеет ORCID (`OrcidAlreadyLinked`), но **нет уникальности по значению**. Один ORCID-строки может быть привязан к N разным адресам. Нет reverse mapping `orcid_id → address`. |
+| R-2 | verify() — только owner? | ⚠️ Проверить | `verify_researcher` вызывает `require_admin()`, не `require_owner()`. Любой admin (не только owner) может верифицировать исследователей. Возможно intentional, но требует явного подтверждения с Кириллом. |
+| R-3 | Что при ORCID API timeout — fallback или revert? | ❌ Gap | `link_orcid` хранит произвольную строку без API/oracle вызова и без верификации подписи. Любая строка принимается как валидный ORCID. ORCID verification queue/fallback не реализован (Gap #3 в CLAUDE.md, открыт). |
+
+### DIUReputation
+
+| # | Пункт | Статус | Детали |
+|---|-------|--------|--------|
+| E-1 | addXP(u64::MAX) — нет overflow, возвращает Err? | ⚠️ Проверить | `internal_add_xp` делает `old_xp + amount` — обычное U256 сложение без `checked_add`. U256 wraps при переполнении (2^256 — практически недостижимо). Нет верхнего cap на amount per call. Нет `Err` — silent wrap вместо revert. |
+| E-2 | recordLogin — повторный вызов в тот же день — idempotent? | ✅ OK | `record_daily_login` возвращает `AlreadyLoggedInToday` при `last == today && last != U256::ZERO`. Детерминировано отклоняется. Edge case: если `last_login_day == 0` И `today == 0` (unix epoch, невозможно в production) — проверка пропускается. |
+| E-3 | Replay attack: та же tx дважды — отклоняется (P-006)? | ❌ Gap | Нет нонсов. `add_xp` не дедуплицирует вызовы — авторизованный backend может вызвать с теми же аргументами N раз и XP начислится N раз. `record_daily_login` защищен (same-day check), но `add_xp` — нет. P-006 открыт. |
+| E-4 | Нет rate limiting → per-user daily XP cap | ❌ Gap #4 | Нет per-user cap на XP в день. Открыт как Gap #4 в CLAUDE.md. |
+
+### DIUAchievements
+
+| # | Пункт | Статус | Детали |
+|---|-------|--------|--------|
+| A-1 | Двойной mint одного badge — отклоняется? | ✅ OK | `mint()` проверяет `self.achieved.getter(user).get(achievement_id)` → `AchievementAlreadyEarned`. Покрыт тестом `test_mint_duplicate_achievement_reverts`. |
+| A-2 | mint без registration в DIURegistry — отклоняется? | ❌ Gap | `mint()` не вызывает `DIURegistry.is_registered()`. Незарегистрированный адрес может получить badge. Нет cross-contract проверки. |
+| A-3 | tokenURI при отсутствующем IPFS пине — fallback URI? | ❌ Gap | `token_uri()` возвращает сохраненную строку без fallback. Если IPFS pin недоступен — возвращается broken URI. Нет механизма fallback или проверки доступности. |
+
+### DIUToken
+
+| # | Пункт | Статус | Детали |
+|---|-------|--------|--------|
+| T-1 | pause() — что именно блокируется? | ✅ OK | `require_not_paused()` вызывается в: `transfer`, `approve`, `transfer_from`, `mint`, `burn`. НЕ блокируется: admin ops (`grant_admin`, `revoke_admin`, `grant_authorized`, `revoke_authorized`), `unpause`, view functions. Поведение соответствует ERC-20 pause pattern. |
+| T-2 | transfer при paused — отклоняется? | ✅ OK | `transfer` вызывает `require_not_paused()` первым → `ContractPaused`. Покрыт тестом `test_transfer_when_paused_reverts`. |
+| T-3 | Нет multi-sig (Gap #1) — задокументировано для Phase 3 | ❌ Gap #1 | Owner = single EOA. Нет multi-sig. Задокументировано в ADR D-027, деферрнуто на Phase 3. |
+
+### DIUProgress
+
+| # | Пункт | Статус | Детали |
+|---|-------|--------|--------|
+| P-1 | record_simulation() без регистрации пользователя — отклоняется? | ❌ Gap | `record_simulation` проверяет: authorized caller, zero address, bounds, score. Нет проверки `DIURegistry.is_registered(user)`. Аналогично A-2 (DIUAchievements). |
+| P-2 | XP cross-contract call — что если DIUReputation недоступен? | ⚠️ Проверить | `try_award_xp` non-reverting по дизайну (ADR D-019): emits `XpCallFailed` и продолжает. Симуляция записывается. Нет auto-retry. Если backend не мониторит `XpCallFailed` — XP теряется навсегда. Нужен backend-side watchdog. |
+| P-3 | get_export_snapshot() — только authorized? | ❌ Gap | `get_export_snapshot` — публичная view функция (`&self`) без access control. Любой адрес читает полный прогресс любого пользователя. Privacy concern для Research Mode (GDPR). |
+| P-4 | Address::ZERO как reputation addr = test mode (задокументировано) | ✅ OK | Задокументировано в коде: `/// Address::ZERO = skip cross-contract XP calls (test/stub mode)`. Тесты явно передают `Address::ZERO`. |
+
+### Сводка
+
+| Статус | Кол-во | Пункты |
+|--------|--------|--------|
+| ✅ OK | 6 | E-2, A-1, T-1, T-2, P-4 + (login idempotency) |
+| ❌ Gap | 8 | R-1, R-3, E-3, E-4, A-2, A-3, T-3, P-1, P-3 |
+| ⚠️ Проверить | 3 | R-2, E-1, P-2 |
+
+**Приоритеты перед Кириллом**:
+- 🔴 R-1 (ORCID uniqueness) + A-2/P-1 (registration gate) — простые gap, исправляются в 1 сессию
+- 🔴 E-3 (replay / nonces) — P-006, ждет решения с Кириллом
+- 🟡 P-3 (export_snapshot без ACL) — privacy decision нужен
+- 🟡 R-2 (verify = admin vs owner) — intentional или нет?
 
 ---
 

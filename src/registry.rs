@@ -6,7 +6,7 @@
 
 use alloc::string::String;
 use stylus_sdk::{
-    alloy_primitives::{Address, U256},
+    alloy_primitives::{keccak256, Address, U256},
     alloy_sol_types::sol,
     prelude::*,
 };
@@ -49,6 +49,8 @@ sol! {
     error EmptyString();
     error AlreadyVerified();
     error OrcidAlreadyLinked();
+    /// This ORCID is already linked by a different address.
+    error OrcidAlreadyRegistered();
     error ZeroAddress();
     error AlreadyInitialized();
 }
@@ -62,6 +64,7 @@ pub enum RegistryError {
     EmptyString(EmptyString),
     AlreadyVerified(AlreadyVerified),
     OrcidAlreadyLinked(OrcidAlreadyLinked),
+    OrcidAlreadyRegistered(OrcidAlreadyRegistered),
     ZeroAddress(ZeroAddress),
     AlreadyInitialized(AlreadyInitialized),
 }
@@ -75,6 +78,7 @@ impl core::fmt::Debug for RegistryError {
             Self::EmptyString(_) => write!(f, "EmptyString"),
             Self::AlreadyVerified(_) => write!(f, "AlreadyVerified"),
             Self::OrcidAlreadyLinked(_) => write!(f, "OrcidAlreadyLinked"),
+            Self::OrcidAlreadyRegistered(_) => write!(f, "OrcidAlreadyRegistered"),
             Self::ZeroAddress(_) => write!(f, "ZeroAddress"),
             Self::AlreadyInitialized(_) => write!(f, "AlreadyInitialized"),
         }
@@ -105,6 +109,11 @@ sol_storage! {
 
         /// ORCID identifier linked to a user.
         mapping(address => string) orcid_ids;
+
+        /// Global ORCID uniqueness index: keccak256(orcid_id) → whether taken.
+        ///
+        /// Prevents the same ORCID string from being linked to multiple addresses.
+        mapping(bytes32 => bool) orcid_registry;
 
         /// Whether a user is a verified researcher.
         mapping(address => bool) verified;
@@ -235,6 +244,8 @@ impl DIURegistry {
     /// Phase 1: stores the ORCID string without cryptographic signature
     /// verification. Signature verification deferred pending security
     /// advisor guidance.
+    ///
+    /// Enforces global uniqueness: each ORCID can be linked to at most one address.
     pub fn link_orcid(&mut self, orcid_id: String) -> Result<(), RegistryError> {
         if orcid_id.is_empty() {
             return Err(RegistryError::EmptyString(EmptyString {}));
@@ -243,11 +254,21 @@ impl DIURegistry {
         let caller = self.vm().msg_sender();
         self.require_registered(caller)?;
 
+        // Caller already has an ORCID linked.
         if !self.orcid_ids.get(caller).get_string().is_empty() {
             return Err(RegistryError::OrcidAlreadyLinked(OrcidAlreadyLinked {}));
         }
 
+        // Global uniqueness: reject if this ORCID is already claimed by any address.
+        let orcid_hash = keccak256(orcid_id.as_bytes());
+        if self.orcid_registry.get(orcid_hash) {
+            return Err(RegistryError::OrcidAlreadyRegistered(
+                OrcidAlreadyRegistered {},
+            ));
+        }
+
         self.orcid_ids.setter(caller).set_str(&orcid_id);
+        self.orcid_registry.setter(orcid_hash).set(true);
 
         self.vm().log(OrcidLinked {
             user: caller,
@@ -539,6 +560,25 @@ mod tests {
 
         let result = contract.link_orcid("0000-0001-9999-9999".into());
         assert!(matches!(result, Err(RegistryError::OrcidAlreadyLinked(_))));
+    }
+
+    #[test]
+    fn test_link_orcid_same_orcid_two_addresses_reverts() {
+        let (vm, mut contract) = setup();
+
+        // ALICE links the ORCID first.
+        vm.set_sender(ALICE);
+        contract.register_user("uri-alice".into()).unwrap();
+        contract.link_orcid("0000-0001-2345-6789".into()).unwrap();
+
+        // BOB tries to link the same ORCID — must fail.
+        vm.set_sender(BOB);
+        contract.register_user("uri-bob".into()).unwrap();
+        let result = contract.link_orcid("0000-0001-2345-6789".into());
+        assert!(matches!(
+            result,
+            Err(RegistryError::OrcidAlreadyRegistered(_))
+        ));
     }
 
     // ─── verify_researcher ───────────────────────────────────────────

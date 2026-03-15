@@ -11,6 +11,9 @@ use stylus_sdk::{
     prelude::*,
 };
 
+/// Return type for `get_export_snapshot`: (run_counts, best_scores, completed).
+type ExportSnapshot = (Vec<U256>, Vec<U256>, Vec<bool>);
+
 // ═══════════════════════════════════════════════════════════════════════════
 // CROSS-CONTRACT INTERFACE
 // ═══════════════════════════════════════════════════════════════════════════
@@ -503,13 +506,16 @@ impl DIUProgress {
     /// Returns parallel arrays over experiment IDs `0..=max_experiment_id`:
     /// `(run_counts[], best_scores[], completed_flags[])`.
     ///
-    /// Designed for Research Mode data export: a single eth_call returns the
-    /// complete state needed for JSON/CSV generation without event replay.
+    /// Authorized callers only (P-3 security fix): prevents unrestricted
+    /// enumeration of user progress data (GDPR / privacy concern).
+    ///
     /// For `max_experiment_id` > 50, prefer event-based indexing instead.
     pub fn get_export_snapshot(
         &self,
         user: Address,
-    ) -> (Vec<U256>, Vec<U256>, Vec<bool>) {
+    ) -> Result<ExportSnapshot, ProgressError> {
+        self.require_authorized()?;
+
         let max = self.max_experiment_id.get().saturating_to::<usize>();
         let len = max + 1; // experiments 0..=max
 
@@ -524,7 +530,7 @@ impl DIUProgress {
             completed.push(self.experiment_done.get(user).get(exp_id));
         }
 
-        (run_counts, best_scores, completed)
+        Ok((run_counts, best_scores, completed))
     }
 
     /// Get the contract owner address.
@@ -876,10 +882,20 @@ mod tests {
     fn test_get_export_snapshot_length() {
         let (_, contract) = setup();
         // max_experiment_id = 10 → arrays have 11 elements (0..=10)
-        let (run_counts, best_scores, completed) = contract.get_export_snapshot(ALICE);
+        // Owner is authorized by default.
+        let (run_counts, best_scores, completed) =
+            contract.get_export_snapshot(ALICE).unwrap();
         assert_eq!(run_counts.len(), 11);
         assert_eq!(best_scores.len(), 11);
         assert_eq!(completed.len(), 11);
+    }
+
+    #[test]
+    fn test_get_export_snapshot_unauthorized_reverts() {
+        let (vm, contract) = setup();
+        vm.set_sender(ALICE); // not authorized
+        let result = contract.get_export_snapshot(ALICE);
+        assert!(matches!(result, Err(ProgressError::Unauthorized(_))));
     }
 
     // ─── Group 7: Access control (1 test) ────────────────────────────
