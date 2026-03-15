@@ -2,6 +2,9 @@
 #![allow(unexpected_cfgs)]
 extern crate alloc;
 
+/// Shared pause state module — embedded in contracts that need emergency stop (ADR D-029).
+pub mod pause;
+
 /// DIURegistry — user identity, ORCID linking, verification.
 /// Default entrypoint for WASM builds.
 #[cfg(any(test, feature = "registry", not(any(feature = "reputation", feature = "achievements", feature = "token", feature = "progress"))))]

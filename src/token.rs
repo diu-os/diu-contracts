@@ -11,6 +11,8 @@ use stylus_sdk::{
     prelude::*,
 };
 
+use crate::pause::{ContractNotPaused, ContractPaused, Paused, PauseError, PauseStorage, Unpaused};
+
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -31,12 +33,6 @@ sol! {
 
     /// ERC-20 standard Approval event.
     event Approval(address indexed owner, address indexed spender, uint256 value);
-
-    /// Emitted when the contract is paused.
-    event Paused(address indexed account);
-
-    /// Emitted when the contract is unpaused.
-    event Unpaused(address indexed account);
 
     /// Emitted when the owner grants admin role.
     event AdminGranted(address indexed account, address indexed granted_by);
@@ -61,8 +57,6 @@ sol! {
     error ZeroAmount();
     error InsufficientBalance();
     error InsufficientAllowance();
-    error ContractPaused();
-    error ContractNotPaused();
     error AlreadyInitialized();
 }
 
@@ -90,6 +84,16 @@ impl core::fmt::Debug for TokenError {
             Self::ContractPaused(_) => write!(f, "ContractPaused"),
             Self::ContractNotPaused(_) => write!(f, "ContractNotPaused"),
             Self::AlreadyInitialized(_) => write!(f, "AlreadyInitialized"),
+        }
+    }
+}
+
+impl From<PauseError> for TokenError {
+    fn from(e: PauseError) -> Self {
+        match e {
+            PauseError::ContractPaused(e) => Self::ContractPaused(e),
+            PauseError::NotPauseGuardian(_) => Self::Unauthorized(Unauthorized {}),
+            PauseError::ContractNotPaused(e) => Self::ContractNotPaused(e),
         }
     }
 }
@@ -124,10 +128,10 @@ sol_storage! {
         /// Total token supply.
         uint256 total_supply;
 
-        // ─── Pause state ─────────────────────────────────────────────
+        // ─── Pause state (ADR D-029) ─────────────────────────────────
 
-        /// Whether the contract is paused.
-        bool paused;
+        /// Pause state: paused flag + guardian address. Added at storage END per D-025.
+        PauseStorage pause_state;
     }
 }
 
@@ -158,14 +162,6 @@ impl DIUToken {
         let caller = self.vm().msg_sender();
         if caller != self.owner.get() && !self.authorized.get(caller) {
             return Err(TokenError::Unauthorized(Unauthorized {}));
-        }
-        Ok(())
-    }
-
-    /// Returns an error if the contract is paused.
-    fn require_not_paused(&self) -> Result<(), TokenError> {
-        if self.paused.get() {
-            return Err(TokenError::ContractPaused(ContractPaused {}));
         }
         Ok(())
     }
@@ -222,6 +218,7 @@ impl DIUToken {
         self.admins.setter(caller).set(true);
         self.authorized.setter(caller).set(true);
         self.initialized.set(true);
+        self.pause_state.set_pause_guardian(caller);
 
         self.vm().log(Initialized { owner: caller });
         Ok(())
@@ -231,7 +228,7 @@ impl DIUToken {
 
     /// Transfer tokens to another address.
     pub fn transfer(&mut self, to: Address, amount: U256) -> Result<bool, TokenError> {
-        self.require_not_paused()?;
+        self.pause_state.require_not_paused()?;
 
         let caller = self.vm().msg_sender();
         self.internal_transfer(caller, to, amount)?;
@@ -241,7 +238,7 @@ impl DIUToken {
 
     /// Approve a spender to transfer tokens on behalf of the caller.
     pub fn approve(&mut self, spender: Address, amount: U256) -> Result<bool, TokenError> {
-        self.require_not_paused()?;
+        self.pause_state.require_not_paused()?;
 
         if spender == Address::ZERO {
             return Err(TokenError::ZeroAddress(ZeroAddress {}));
@@ -268,7 +265,7 @@ impl DIUToken {
         to: Address,
         amount: U256,
     ) -> Result<bool, TokenError> {
-        self.require_not_paused()?;
+        self.pause_state.require_not_paused()?;
 
         let caller = self.vm().msg_sender();
         let current_allowance = self.allowances.getter(from).get(caller);
@@ -297,7 +294,7 @@ impl DIUToken {
     /// Mint new tokens to an address. Authorized callers only.
     pub fn mint(&mut self, to: Address, amount: U256) -> Result<(), TokenError> {
         self.require_authorized()?;
-        self.require_not_paused()?;
+        self.pause_state.require_not_paused()?;
 
         if to == Address::ZERO {
             return Err(TokenError::ZeroAddress(ZeroAddress {}));
@@ -323,7 +320,7 @@ impl DIUToken {
 
     /// Burn tokens from the caller's balance.
     pub fn burn(&mut self, amount: U256) -> Result<(), TokenError> {
-        self.require_not_paused()?;
+        self.pause_state.require_not_paused()?;
 
         if amount == U256::ZERO {
             return Err(TokenError::ZeroAmount(ZeroAmount {}));
@@ -355,29 +352,18 @@ impl DIUToken {
     /// Pause all token transfers, mints, and burns. Admin only.
     pub fn pause(&mut self) -> Result<(), TokenError> {
         self.require_admin()?;
-        self.require_not_paused()?;
-
-        self.paused.set(true);
-
+        self.pause_state.internal_pause()?;
         let caller = self.vm().msg_sender();
-        self.vm().log(Paused { account: caller });
-
+        self.vm().log(Paused { guardian: caller });
         Ok(())
     }
 
     /// Unpause the contract. Admin only.
     pub fn unpause(&mut self) -> Result<(), TokenError> {
         self.require_admin()?;
-
-        if !self.paused.get() {
-            return Err(TokenError::ContractNotPaused(ContractNotPaused {}));
-        }
-
-        self.paused.set(false);
-
+        self.pause_state.internal_unpause()?;
         let caller = self.vm().msg_sender();
-        self.vm().log(Unpaused { account: caller });
-
+        self.vm().log(Unpaused { guardian: caller });
         Ok(())
     }
 
@@ -500,9 +486,24 @@ impl DIUToken {
         account == self.owner.get() || self.authorized.get(account)
     }
 
+    /// Set the pause guardian address. Owner only. See ADR D-029.
+    pub fn set_pause_guardian(&mut self, guardian: Address) -> Result<(), TokenError> {
+        self.require_owner()?;
+        if guardian == Address::ZERO {
+            return Err(TokenError::ZeroAddress(ZeroAddress {}));
+        }
+        self.pause_state.set_pause_guardian(guardian);
+        Ok(())
+    }
+
+    /// Get the current pause guardian address.
+    pub fn get_pause_guardian(&self) -> Address {
+        self.pause_state.get_pause_guardian()
+    }
+
     /// Check whether the contract is paused.
     pub fn is_paused(&self) -> bool {
-        self.paused.get()
+        self.pause_state.is_paused()
     }
 }
 
