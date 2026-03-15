@@ -111,7 +111,7 @@ fn ff_add_xp_rejects_unauthorized() {
 
     // Переключаемся на атакующего — он НЕ authorized
     vm.set_sender(ATTACKER);
-    let result = contract.add_xp(ALICE, U256::from(100u64));
+    let result = contract.add_xp(ALICE, U256::from(100u64), 0);
     assert!(
         result.is_err(),
         "INVARIANT VIOLATED (Q-05): Unauthorized addXP must be rejected"
@@ -192,7 +192,7 @@ fn ff_xp_level_within_safe_bounds() {
         let mut c = DIUReputation::from(&vm_inner);
         c.initialize().expect("Init must succeed");
         // OWNER is authorized after initialize
-        c.add_xp(ALICE, xp).expect("add_xp should succeed");
+        c.add_xp(ALICE, xp, 0).expect("add_xp should succeed");
         let lvl = c.get_level(ALICE);
         assert!(
             (1..=5).contains(&lvl),
@@ -302,7 +302,7 @@ fn ff_contracts_state_is_isolated() {
     rep.initialize().expect("Init must succeed");
     // Пытаемся добавить XP с другого адреса — Err
     vm1.set_sender(Address::ZERO);
-    let failed = rep.add_xp(ALICE, U256::from(100u64));
+    let failed = rep.add_xp(ALICE, U256::from(100u64), 0);
     assert!(failed.is_err(), "Precondition: zero-address add_xp should fail");
 
     // После ошибки в Reputation — Registry должен работать нормально

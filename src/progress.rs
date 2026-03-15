@@ -21,7 +21,10 @@ type ExportSnapshot = (Vec<U256>, Vec<U256>, Vec<bool>);
 sol_interface! {
     /// Minimal interface for the deployed DIUReputation contract.
     interface IReputation {
-        function addXp(address user, uint256 amount) external;
+        /// Award XP; nonce must match the per-user counter (ADR D-026).
+        function addXp(address user, uint256 amount, uint64 nonce) external;
+        /// Return the current replay-prevention nonce for a user (ADR D-026).
+        function getNonce(address user) external view returns (uint64);
     }
 }
 
@@ -224,16 +227,30 @@ impl DIUProgress {
     /// If the reputation contract address is Address::ZERO (test/stub mode),
     /// the call is silently skipped. If the external call reverts, emits
     /// `XpCallFailed` so the backend can retry directly.
+    ///
+    /// Implements ADR D-026: fetches the current per-user nonce via a static
+    /// call, then passes it to addXp. Both calls are within the same transaction
+    /// so no other tx can interleave and invalidate the nonce.
     fn try_award_xp(&mut self, user: Address, amount: U256) {
         let rep_addr = self.reputation_contract.get();
         if rep_addr == Address::ZERO {
             return;
         }
         let reputation = IReputation::new(rep_addr);
+
+        // Static call: read current nonce (no state change).
+        let nonce = match reputation.get_nonce(self.vm(), Call::new(), user) {
+            Ok(n) => n,
+            Err(_) => {
+                self.vm().log(XpCallFailed { user, amount });
+                return;
+            }
+        };
+
+        // Mutating call: award XP with the fetched nonce.
         // Call::new_mutating requires &mut TopLevelStorage (satisfied by #[entrypoint]).
-        // It does not hold the borrow after returning, so self.vm() is safe afterward.
         let cfg = Call::new_mutating(self);
-        if reputation.add_xp(self.vm(), cfg, user, amount).is_err() {
+        if reputation.add_xp(self.vm(), cfg, user, amount, nonce).is_err() {
             self.vm().log(XpCallFailed { user, amount });
         }
     }

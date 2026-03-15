@@ -6,7 +6,7 @@
 
 use alloc::vec::Vec;
 use stylus_sdk::{
-    alloy_primitives::{Address, U256},
+    alloy_primitives::{Address, U256, U64},
     alloy_sol_types::sol,
     prelude::*,
 };
@@ -67,6 +67,8 @@ sol! {
     error AlreadyInitialized();
     /// XP addition would overflow U256 — should never happen in practice.
     error ArithmeticOverflow();
+    /// Provided nonce does not match the expected per-user nonce (ADR D-026).
+    error InvalidNonce();
 }
 
 /// Contract-level error type for DIUReputation.
@@ -78,6 +80,7 @@ pub enum ReputationError {
     AlreadyLoggedInToday(AlreadyLoggedInToday),
     AlreadyInitialized(AlreadyInitialized),
     ArithmeticOverflow(ArithmeticOverflow),
+    InvalidNonce(InvalidNonce),
 }
 
 impl core::fmt::Debug for ReputationError {
@@ -89,6 +92,7 @@ impl core::fmt::Debug for ReputationError {
             Self::AlreadyLoggedInToday(_) => write!(f, "AlreadyLoggedInToday"),
             Self::AlreadyInitialized(_) => write!(f, "AlreadyInitialized"),
             Self::ArithmeticOverflow(_) => write!(f, "ArithmeticOverflow"),
+            Self::InvalidNonce(_) => write!(f, "InvalidNonce"),
         }
     }
 }
@@ -129,6 +133,16 @@ sol_storage! {
 
         /// Total XP awarded across all users.
         uint256 total_xp_awarded;
+
+        /// Per-user nonce for logical replay prevention (ADR D-026).
+        /// Backend must pass the current nonce on every add_xp call.
+        mapping(address => uint64) user_nonces;
+
+        /// Reserved storage slots for future upgrades (ADR D-025).
+        uint256 _reserved0;
+        uint256 _reserved1;
+        uint256 _reserved2;
+        uint256 _reserved3;
     }
 }
 
@@ -244,7 +258,15 @@ impl DIUReputation {
     /// Award XP to a user. Authorized callers only.
     ///
     /// XP guide: experiment=100, perfect quiz=50, daily login=10.
-    pub fn add_xp(&mut self, user: Address, amount: U256) -> Result<(), ReputationError> {
+    ///
+    /// `nonce` must equal the current per-user nonce (see `get_nonce`).
+    /// On success, the nonce is incremented to prevent logical replay (ADR D-026).
+    pub fn add_xp(
+        &mut self,
+        user: Address,
+        amount: U256,
+        nonce: u64,
+    ) -> Result<(), ReputationError> {
         self.require_authorized()?;
 
         if user == Address::ZERO {
@@ -254,7 +276,16 @@ impl DIUReputation {
             return Err(ReputationError::ZeroAmount(ZeroAmount {}));
         }
 
+        let expected = self.user_nonces.get(user).saturating_to::<u64>();
+        if nonce != expected {
+            return Err(ReputationError::InvalidNonce(InvalidNonce {}));
+        }
+
         self.internal_add_xp(user, amount)?;
+        // Increment only after successful XP award so a failed internal_add_xp
+        // does not consume the nonce (matches on-chain revert semantics in tests).
+        self.user_nonces.setter(user).set(U64::from(nonce.wrapping_add(1)));
+
         Ok(())
     }
 
@@ -419,6 +450,13 @@ impl DIUReputation {
     pub fn is_authorized(&self, account: Address) -> bool {
         account == self.owner.get() || self.authorized.get(account)
     }
+
+    /// Get the current replay-prevention nonce for a user (ADR D-026).
+    ///
+    /// Pass this value as `nonce` in the next `add_xp` call for this user.
+    pub fn get_nonce(&self, user: Address) -> u64 {
+        self.user_nonces.get(user).saturating_to::<u64>()
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -502,7 +540,7 @@ mod tests {
     fn test_add_xp_success() {
         let (_, mut contract) = setup_with_backend();
 
-        contract.add_xp(ALICE, U256::from(100)).unwrap();
+        contract.add_xp(ALICE, U256::from(100), 0).unwrap();
 
         assert_eq!(contract.get_xp(ALICE), U256::from(100));
         assert_eq!(contract.total_xp_awarded(), U256::from(100));
@@ -513,8 +551,8 @@ mod tests {
     fn test_add_xp_accumulates() {
         let (_, mut contract) = setup_with_backend();
 
-        contract.add_xp(ALICE, U256::from(50)).unwrap();
-        contract.add_xp(ALICE, U256::from(75)).unwrap();
+        contract.add_xp(ALICE, U256::from(50), 0).unwrap();
+        contract.add_xp(ALICE, U256::from(75), 1).unwrap();
 
         assert_eq!(contract.get_xp(ALICE), U256::from(125));
         assert_eq!(contract.total_xp_awarded(), U256::from(125));
@@ -526,8 +564,8 @@ mod tests {
     fn test_add_xp_multiple_users() {
         let (_, mut contract) = setup_with_backend();
 
-        contract.add_xp(ALICE, U256::from(100)).unwrap();
-        contract.add_xp(BOB, U256::from(200)).unwrap();
+        contract.add_xp(ALICE, U256::from(100), 0).unwrap();
+        contract.add_xp(BOB, U256::from(200), 0).unwrap();
 
         assert_eq!(contract.get_xp(ALICE), U256::from(100));
         assert_eq!(contract.get_xp(BOB), U256::from(200));
@@ -540,7 +578,7 @@ mod tests {
         let (vm, mut contract) = setup();
         vm.set_sender(ALICE);
 
-        let result = contract.add_xp(BOB, U256::from(100));
+        let result = contract.add_xp(BOB, U256::from(100), 0);
         assert!(matches!(result, Err(ReputationError::Unauthorized(_))));
     }
 
@@ -548,7 +586,7 @@ mod tests {
     fn test_add_xp_zero_amount_reverts() {
         let (_, mut contract) = setup_with_backend();
 
-        let result = contract.add_xp(ALICE, U256::ZERO);
+        let result = contract.add_xp(ALICE, U256::ZERO, 0);
         assert!(matches!(result, Err(ReputationError::ZeroAmount(_))));
     }
 
@@ -556,11 +594,11 @@ mod tests {
     fn test_add_xp_overflow_reverts() {
         let (_, mut contract) = setup_with_backend();
 
-        // Set XP to U256::MAX by awarding MAX in one call.
-        contract.add_xp(ALICE, U256::MAX).unwrap();
+        // Set XP to U256::MAX by awarding MAX in one call (nonce=0).
+        contract.add_xp(ALICE, U256::MAX, 0).unwrap();
 
-        // Any additional XP must overflow — expect Err.
-        let result = contract.add_xp(ALICE, U256::from(1));
+        // Any additional XP must overflow — expect Err. Nonce=1 (previous call succeeded).
+        let result = contract.add_xp(ALICE, U256::from(1), 1);
         assert!(matches!(
             result,
             Err(ReputationError::ArithmeticOverflow(_))
@@ -571,7 +609,7 @@ mod tests {
     fn test_add_xp_zero_address_reverts() {
         let (_, mut contract) = setup_with_backend();
 
-        let result = contract.add_xp(Address::ZERO, U256::from(100));
+        let result = contract.add_xp(Address::ZERO, U256::from(100), 0);
         assert!(matches!(result, Err(ReputationError::ZeroAddress(_))));
     }
 
@@ -586,42 +624,42 @@ mod tests {
     #[test]
     fn test_level_2_at_100_xp() {
         let (_, mut contract) = setup_with_backend();
-        contract.add_xp(ALICE, U256::from(100)).unwrap();
+        contract.add_xp(ALICE, U256::from(100), 0).unwrap();
         assert_eq!(contract.get_level(ALICE), 2);
     }
 
     #[test]
     fn test_level_3_at_300_xp() {
         let (_, mut contract) = setup_with_backend();
-        contract.add_xp(ALICE, U256::from(300)).unwrap();
+        contract.add_xp(ALICE, U256::from(300), 0).unwrap();
         assert_eq!(contract.get_level(ALICE), 3);
     }
 
     #[test]
     fn test_level_4_at_600_xp() {
         let (_, mut contract) = setup_with_backend();
-        contract.add_xp(ALICE, U256::from(600)).unwrap();
+        contract.add_xp(ALICE, U256::from(600), 0).unwrap();
         assert_eq!(contract.get_level(ALICE), 4);
     }
 
     #[test]
     fn test_level_5_at_1000_xp() {
         let (_, mut contract) = setup_with_backend();
-        contract.add_xp(ALICE, U256::from(1000)).unwrap();
+        contract.add_xp(ALICE, U256::from(1000), 0).unwrap();
         assert_eq!(contract.get_level(ALICE), 5);
     }
 
     #[test]
     fn test_level_boundary_99_is_level_1() {
         let (_, mut contract) = setup_with_backend();
-        contract.add_xp(ALICE, U256::from(99)).unwrap();
+        contract.add_xp(ALICE, U256::from(99), 0).unwrap();
         assert_eq!(contract.get_level(ALICE), 1);
     }
 
     #[test]
     fn test_level_above_1000() {
         let (_, mut contract) = setup_with_backend();
-        contract.add_xp(ALICE, U256::from(5000)).unwrap();
+        contract.add_xp(ALICE, U256::from(5000), 0).unwrap();
         assert_eq!(contract.get_level(ALICE), 5);
     }
 
@@ -728,9 +766,9 @@ mod tests {
     fn test_leaderboard_sorted_descending() {
         let (_, mut contract) = setup_with_backend();
 
-        contract.add_xp(ALICE, U256::from(100)).unwrap();
-        contract.add_xp(BOB, U256::from(300)).unwrap();
-        contract.add_xp(CAROL, U256::from(200)).unwrap();
+        contract.add_xp(ALICE, U256::from(100), 0).unwrap();
+        contract.add_xp(BOB, U256::from(300), 0).unwrap();
+        contract.add_xp(CAROL, U256::from(200), 0).unwrap();
 
         let (addrs, xps) = contract.get_leaderboard(U256::from(10));
 
@@ -747,9 +785,9 @@ mod tests {
     fn test_leaderboard_respects_limit() {
         let (_, mut contract) = setup_with_backend();
 
-        contract.add_xp(ALICE, U256::from(100)).unwrap();
-        contract.add_xp(BOB, U256::from(300)).unwrap();
-        contract.add_xp(CAROL, U256::from(200)).unwrap();
+        contract.add_xp(ALICE, U256::from(100), 0).unwrap();
+        contract.add_xp(BOB, U256::from(300), 0).unwrap();
+        contract.add_xp(CAROL, U256::from(200), 0).unwrap();
 
         let (addrs, xps) = contract.get_leaderboard(U256::from(2));
 
@@ -805,14 +843,75 @@ mod tests {
 
         contract.grant_authorized(BACKEND).unwrap();
         vm.set_sender(BACKEND);
-        contract.add_xp(ALICE, U256::from(50)).unwrap();
+        contract.add_xp(ALICE, U256::from(50), 0).unwrap();
 
         vm.set_sender(OWNER);
         contract.revoke_authorized(BACKEND).unwrap();
 
         vm.set_sender(BACKEND);
-        let result = contract.add_xp(ALICE, U256::from(50));
+        // nonce=1 would be correct, but auth check fires first — any nonce value fails here
+        let result = contract.add_xp(ALICE, U256::from(50), 1);
         assert!(matches!(result, Err(ReputationError::Unauthorized(_))));
+    }
+
+    // ─── Nonce (ADR D-026) ───────────────────────────────────────────
+
+    #[test]
+    fn test_get_nonce_default_zero() {
+        let (_, contract) = setup();
+        assert_eq!(contract.get_nonce(ALICE), 0);
+    }
+
+    #[test]
+    fn test_add_xp_valid_nonce_zero() {
+        let (_, mut contract) = setup_with_backend();
+        contract.add_xp(ALICE, U256::from(100), 0).unwrap();
+        assert_eq!(contract.get_xp(ALICE), U256::from(100));
+    }
+
+    #[test]
+    fn test_add_xp_nonce_increments_after_success() {
+        let (_, mut contract) = setup_with_backend();
+        assert_eq!(contract.get_nonce(ALICE), 0);
+        contract.add_xp(ALICE, U256::from(50), 0).unwrap();
+        assert_eq!(contract.get_nonce(ALICE), 1);
+        contract.add_xp(ALICE, U256::from(50), 1).unwrap();
+        assert_eq!(contract.get_nonce(ALICE), 2);
+    }
+
+    #[test]
+    fn test_add_xp_invalid_nonce_reverts() {
+        let (_, mut contract) = setup_with_backend();
+        // Expected nonce is 0, but caller passes 1
+        let result = contract.add_xp(ALICE, U256::from(100), 1);
+        assert!(matches!(result, Err(ReputationError::InvalidNonce(_))));
+        // XP must not have been awarded
+        assert_eq!(contract.get_xp(ALICE), U256::ZERO);
+    }
+
+    #[test]
+    fn test_add_xp_replay_reverts() {
+        let (_, mut contract) = setup_with_backend();
+        contract.add_xp(ALICE, U256::from(100), 0).unwrap();
+        // Replay: same nonce=0 must be rejected
+        let result = contract.add_xp(ALICE, U256::from(100), 0);
+        assert!(matches!(result, Err(ReputationError::InvalidNonce(_))));
+        // XP awarded only once
+        assert_eq!(contract.get_xp(ALICE), U256::from(100));
+    }
+
+    #[test]
+    fn test_add_xp_nonce_independent_per_user() {
+        let (_, mut contract) = setup_with_backend();
+        // Each user starts at nonce=0 independently
+        contract.add_xp(ALICE, U256::from(50), 0).unwrap();
+        contract.add_xp(BOB, U256::from(50), 0).unwrap();
+        assert_eq!(contract.get_nonce(ALICE), 1);
+        assert_eq!(contract.get_nonce(BOB), 1);
+        // ALICE at nonce=1, BOB at nonce=1
+        contract.add_xp(ALICE, U256::from(25), 1).unwrap();
+        assert_eq!(contract.get_nonce(ALICE), 2);
+        assert_eq!(contract.get_nonce(BOB), 1); // BOB unaffected
     }
 
     // ─── View Functions ──────────────────────────────────────────────
