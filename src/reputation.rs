@@ -21,6 +21,12 @@ const SECONDS_PER_DAY: u64 = 86_400;
 /// XP awarded for a daily login.
 const DAILY_LOGIN_XP: u64 = 10;
 
+/// Maximum XP a user can earn in a single calendar day (Gap #4 / E-4).
+///
+/// Covers: ~5 simulations × 50 XP + module completion 100 XP + daily login 10 XP.
+/// Applies to all XP paths (add_xp + record_daily_login) via internal_add_xp.
+const MAX_DAILY_XP: u64 = 500;
+
 /// Level thresholds (checked top-down): (min_xp, level).
 /// Levels: 1(0), 2(100), 3(300), 4(600), 5(1000).
 const LEVEL_THRESHOLDS: [(u64, u8); 5] = [
@@ -69,6 +75,8 @@ sol! {
     error ArithmeticOverflow();
     /// Provided nonce does not match the expected per-user nonce (ADR D-026).
     error InvalidNonce();
+    /// User has reached the daily XP cap (MAX_DAILY_XP). Resets at next UTC day (Gap #4).
+    error DailyXpCapExceeded();
 }
 
 /// Contract-level error type for DIUReputation.
@@ -81,6 +89,7 @@ pub enum ReputationError {
     AlreadyInitialized(AlreadyInitialized),
     ArithmeticOverflow(ArithmeticOverflow),
     InvalidNonce(InvalidNonce),
+    DailyXpCapExceeded(DailyXpCapExceeded),
 }
 
 impl core::fmt::Debug for ReputationError {
@@ -93,6 +102,7 @@ impl core::fmt::Debug for ReputationError {
             Self::AlreadyInitialized(_) => write!(f, "AlreadyInitialized"),
             Self::ArithmeticOverflow(_) => write!(f, "ArithmeticOverflow"),
             Self::InvalidNonce(_) => write!(f, "InvalidNonce"),
+            Self::DailyXpCapExceeded(_) => write!(f, "DailyXpCapExceeded"),
         }
     }
 }
@@ -143,6 +153,12 @@ sol_storage! {
         uint256 _reserved1;
         uint256 _reserved2;
         uint256 _reserved3;
+
+        /// Day number (block_timestamp / 86400) when daily XP tracking was last reset per user.
+        mapping(address => uint256) last_xp_day;
+
+        /// XP earned by a user in the current calendar day. Resets when day changes (Gap #4).
+        mapping(address => uint256) daily_xp_earned;
     }
 }
 
@@ -182,13 +198,38 @@ impl DIUReputation {
 
     /// Internal: add XP to a user, track in user list, emit events.
     ///
-    /// Uses checked arithmetic — returns `Err(ArithmeticOverflow)` if the
-    /// user XP or global total would exceed U256::MAX (unreachable in practice).
+    /// Enforces the per-user daily XP cap (`MAX_DAILY_XP`). The cap resets at
+    /// UTC day boundary (`block_timestamp / 86400`). Both `add_xp` and
+    /// `record_daily_login` go through this function — the cap is a single
+    /// enforcement point (Gap #4).
+    ///
+    /// Note: if a user hits the cap mid-day before `record_daily_login`, the
+    /// streak is still recorded but the 10 XP are not awarded. Acceptable
+    /// edge case for testnet Phase 2.
     fn internal_add_xp(
         &mut self,
         user: Address,
         amount: U256,
     ) -> Result<(), ReputationError> {
+        // ── Daily XP cap (Gap #4 / E-4) ──────────────────────────────
+        let today = U256::from(self.vm().block_timestamp() / SECONDS_PER_DAY);
+        let last = self.last_xp_day.get(user);
+        let earned = if last == today {
+            self.daily_xp_earned.get(user)
+        } else {
+            // New day (or first ever award) — reset tracking
+            self.last_xp_day.setter(user).set(today);
+            U256::ZERO
+        };
+        let new_earned = earned
+            .checked_add(amount)
+            .ok_or(ReputationError::ArithmeticOverflow(ArithmeticOverflow {}))?;
+        if new_earned > U256::from(MAX_DAILY_XP) {
+            return Err(ReputationError::DailyXpCapExceeded(DailyXpCapExceeded {}));
+        }
+        self.daily_xp_earned.setter(user).set(new_earned);
+        // ─────────────────────────────────────────────────────────────
+
         let old_xp = self.xp.get(user);
         let new_xp = old_xp
             .checked_add(amount)
@@ -461,6 +502,19 @@ impl DIUReputation {
     pub fn get_nonce(&self, user: Address) -> u64 {
         self.user_nonces.get(user).saturating_to::<u64>()
     }
+
+    /// Get XP earned by a user in the current calendar day (Gap #4).
+    ///
+    /// Backend can use this to check remaining cap before calling `add_xp`.
+    /// Remaining = MAX_DAILY_XP - get_daily_xp_earned(user).
+    pub fn get_daily_xp_earned(&self, user: Address) -> U256 {
+        let today = U256::from(self.vm().block_timestamp() / SECONDS_PER_DAY);
+        if self.last_xp_day.get(user) == today {
+            self.daily_xp_earned.get(user)
+        } else {
+            U256::ZERO
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -598,15 +652,15 @@ mod tests {
     fn test_add_xp_overflow_reverts() {
         let (_, mut contract) = setup_with_backend();
 
-        // Set XP to U256::MAX by awarding MAX in one call (nonce=0).
-        contract.add_xp(ALICE, U256::MAX, 0).unwrap();
-
-        // Any additional XP must overflow — expect Err. Nonce=1 (previous call succeeded).
-        let result = contract.add_xp(ALICE, U256::from(1), 1);
+        // Daily cap (500 XP) fires before arithmetic overflow for any large amount.
+        // ArithmeticOverflow remains as defensive code but is unreachable via normal flows.
+        let result = contract.add_xp(ALICE, U256::MAX, 0);
         assert!(matches!(
             result,
-            Err(ReputationError::ArithmeticOverflow(_))
+            Err(ReputationError::DailyXpCapExceeded(_))
         ));
+        // XP must not have been awarded
+        assert_eq!(contract.get_xp(ALICE), U256::ZERO);
     }
 
     #[test]
@@ -641,15 +695,23 @@ mod tests {
 
     #[test]
     fn test_level_4_at_600_xp() {
-        let (_, mut contract) = setup_with_backend();
-        contract.add_xp(ALICE, U256::from(600), 0).unwrap();
+        let (vm, mut contract) = setup_with_backend();
+        // 600 XP > daily cap (500) — split across two days
+        vm.set_block_timestamp(20000 * SECONDS_PER_DAY);
+        contract.add_xp(ALICE, U256::from(300), 0).unwrap();
+        vm.set_block_timestamp(20001 * SECONDS_PER_DAY);
+        contract.add_xp(ALICE, U256::from(300), 1).unwrap();
         assert_eq!(contract.get_level(ALICE), 4);
     }
 
     #[test]
     fn test_level_5_at_1000_xp() {
-        let (_, mut contract) = setup_with_backend();
-        contract.add_xp(ALICE, U256::from(1000), 0).unwrap();
+        let (vm, mut contract) = setup_with_backend();
+        // 1000 XP > daily cap (500) — split across two days
+        vm.set_block_timestamp(20000 * SECONDS_PER_DAY);
+        contract.add_xp(ALICE, U256::from(500), 0).unwrap();
+        vm.set_block_timestamp(20001 * SECONDS_PER_DAY);
+        contract.add_xp(ALICE, U256::from(500), 1).unwrap();
         assert_eq!(contract.get_level(ALICE), 5);
     }
 
@@ -662,8 +724,12 @@ mod tests {
 
     #[test]
     fn test_level_above_1000() {
-        let (_, mut contract) = setup_with_backend();
-        contract.add_xp(ALICE, U256::from(5000), 0).unwrap();
+        let (vm, mut contract) = setup_with_backend();
+        // 5000 XP > daily cap (500) — award 500/day across 10 days
+        for day in 0u64..10 {
+            vm.set_block_timestamp((20000 + day) * SECONDS_PER_DAY);
+            contract.add_xp(ALICE, U256::from(500), day).unwrap();
+        }
         assert_eq!(contract.get_level(ALICE), 5);
     }
 
@@ -916,6 +982,91 @@ mod tests {
         contract.add_xp(ALICE, U256::from(25), 1).unwrap();
         assert_eq!(contract.get_nonce(ALICE), 2);
         assert_eq!(contract.get_nonce(BOB), 1); // BOB unaffected
+    }
+
+    // ─── Daily XP Cap (Gap #4 / E-4) ────────────────────────────────
+
+    #[test]
+    fn test_daily_cap_exact_limit() {
+        let (vm, mut contract) = setup_with_backend();
+        vm.set_block_timestamp(20000 * SECONDS_PER_DAY);
+        // Exactly at the cap — must succeed
+        contract.add_xp(ALICE, U256::from(500), 0).unwrap();
+        assert_eq!(contract.get_xp(ALICE), U256::from(500));
+    }
+
+    #[test]
+    fn test_daily_cap_blocks_excess() {
+        let (vm, mut contract) = setup_with_backend();
+        vm.set_block_timestamp(20000 * SECONDS_PER_DAY);
+        contract.add_xp(ALICE, U256::from(500), 0).unwrap();
+        // One more XP must be rejected
+        let result = contract.add_xp(ALICE, U256::from(1), 1);
+        assert!(matches!(
+            result,
+            Err(ReputationError::DailyXpCapExceeded(_))
+        ));
+        // XP not changed
+        assert_eq!(contract.get_xp(ALICE), U256::from(500));
+    }
+
+    #[test]
+    fn test_daily_cap_accumulates_within_day() {
+        let (vm, mut contract) = setup_with_backend();
+        vm.set_block_timestamp(20000 * SECONDS_PER_DAY);
+        // Two calls: 300 + 200 = 500 — both succeed
+        contract.add_xp(ALICE, U256::from(300), 0).unwrap();
+        contract.add_xp(ALICE, U256::from(200), 1).unwrap();
+        assert_eq!(contract.get_xp(ALICE), U256::from(500));
+        // 301st XP in same day — rejected
+        let result = contract.add_xp(ALICE, U256::from(1), 2);
+        assert!(matches!(
+            result,
+            Err(ReputationError::DailyXpCapExceeded(_))
+        ));
+    }
+
+    #[test]
+    fn test_daily_cap_resets_next_day() {
+        let (vm, mut contract) = setup_with_backend();
+        // Day 1: fill cap
+        vm.set_block_timestamp(20000 * SECONDS_PER_DAY);
+        contract.add_xp(ALICE, U256::from(500), 0).unwrap();
+        // Day 2: cap resets — full 500 available again
+        vm.set_block_timestamp(20001 * SECONDS_PER_DAY);
+        contract.add_xp(ALICE, U256::from(500), 1).unwrap();
+        assert_eq!(contract.get_xp(ALICE), U256::from(1000));
+    }
+
+    #[test]
+    fn test_daily_cap_login_counts_toward_cap() {
+        let (vm, mut contract) = setup_with_backend();
+        vm.set_block_timestamp(20000 * SECONDS_PER_DAY);
+        // Login awards 10 XP via internal_add_xp — counts toward cap
+        contract.record_daily_login(ALICE).unwrap();
+        // 490 more XP fits within cap (10 + 490 = 500)
+        contract.add_xp(ALICE, U256::from(490), 0).unwrap();
+        assert_eq!(contract.get_xp(ALICE), U256::from(500));
+        // One more pushes over the cap
+        let result = contract.add_xp(ALICE, U256::from(1), 1);
+        assert!(matches!(
+            result,
+            Err(ReputationError::DailyXpCapExceeded(_))
+        ));
+    }
+
+    #[test]
+    fn test_get_daily_xp_earned() {
+        let (vm, mut contract) = setup_with_backend();
+        vm.set_block_timestamp(20000 * SECONDS_PER_DAY);
+        assert_eq!(contract.get_daily_xp_earned(ALICE), U256::ZERO);
+        contract.add_xp(ALICE, U256::from(150), 0).unwrap();
+        assert_eq!(contract.get_daily_xp_earned(ALICE), U256::from(150));
+        contract.add_xp(ALICE, U256::from(100), 1).unwrap();
+        assert_eq!(contract.get_daily_xp_earned(ALICE), U256::from(250));
+        // Next day — view resets
+        vm.set_block_timestamp(20001 * SECONDS_PER_DAY);
+        assert_eq!(contract.get_daily_xp_earned(ALICE), U256::ZERO);
     }
 
     // ─── View Functions ──────────────────────────────────────────────

@@ -191,8 +191,21 @@ fn ff_xp_level_within_safe_bounds() {
         let vm_inner = TestVMBuilder::new().sender(OWNER).build();
         let mut c = DIUReputation::from(&vm_inner);
         c.initialize().expect("Init must succeed");
-        // OWNER is authorized after initialize
-        c.add_xp(ALICE, xp, 0).expect("add_xp should succeed");
+        // OWNER is authorized after initialize.
+        // Award XP in chunks of MAX_DAILY_XP (500) across different days,
+        // because the daily cap prevents single large awards.
+        let chunk = U256::from(500u64);
+        let mut remaining = xp;
+        let mut nonce: u64 = 0;
+        let mut day: u64 = 20000;
+        while remaining > U256::ZERO {
+            vm_inner.set_block_timestamp(day * 86_400);
+            let award = remaining.min(chunk);
+            c.add_xp(ALICE, award, nonce).expect("add_xp should succeed");
+            remaining -= award;
+            nonce += 1;
+            day += 1;
+        }
         let lvl = c.get_level(ALICE);
         assert!(
             (1..=5).contains(&lvl),
