@@ -51,6 +51,8 @@ sol! {
     error OrcidAlreadyLinked();
     /// This ORCID is already linked by a different address.
     error OrcidAlreadyRegistered();
+    /// The provided ORCID string does not match the format XXXX-XXXX-XXXX-XXXX.
+    error InvalidOrcidFormat();
     error ZeroAddress();
     error AlreadyInitialized();
 }
@@ -65,6 +67,7 @@ pub enum RegistryError {
     AlreadyVerified(AlreadyVerified),
     OrcidAlreadyLinked(OrcidAlreadyLinked),
     OrcidAlreadyRegistered(OrcidAlreadyRegistered),
+    InvalidOrcidFormat(InvalidOrcidFormat),
     ZeroAddress(ZeroAddress),
     AlreadyInitialized(AlreadyInitialized),
 }
@@ -79,6 +82,7 @@ impl core::fmt::Debug for RegistryError {
             Self::AlreadyVerified(_) => write!(f, "AlreadyVerified"),
             Self::OrcidAlreadyLinked(_) => write!(f, "OrcidAlreadyLinked"),
             Self::OrcidAlreadyRegistered(_) => write!(f, "OrcidAlreadyRegistered"),
+            Self::InvalidOrcidFormat(_) => write!(f, "InvalidOrcidFormat"),
             Self::ZeroAddress(_) => write!(f, "ZeroAddress"),
             Self::AlreadyInitialized(_) => write!(f, "AlreadyInitialized"),
         }
@@ -134,6 +138,30 @@ sol_storage! {
 // ═══════════════════════════════════════════════════════════════════════════
 
 impl DIURegistry {
+    /// Validate ORCID format: `XXXX-XXXX-XXXX-XXXX` (19 bytes).
+    ///
+    /// First 15 characters: groups of 4 digits separated by '-'.
+    /// Last character (index 18): digit or 'X'.
+    fn validate_orcid_format(s: &str) -> bool {
+        let b = s.as_bytes();
+        if b.len() != 19 {
+            return false;
+        }
+        // Dashes at positions 4, 9, 14.
+        if b[4] != b'-' || b[9] != b'-' || b[14] != b'-' {
+            return false;
+        }
+        // Digit groups: positions 0-3, 5-8, 10-13, 15-17 must be ASCII digits.
+        // Position 18 may be digit or 'X'.
+        let digit_positions: [usize; 15] = [0, 1, 2, 3, 5, 6, 7, 8, 10, 11, 12, 13, 15, 16, 17];
+        for i in digit_positions {
+            if !b[i].is_ascii_digit() {
+                return false;
+            }
+        }
+        b[18].is_ascii_digit() || b[18] == b'X'
+    }
+
     /// Returns an error if the caller is not the contract owner.
     fn require_owner(&self) -> Result<(), RegistryError> {
         if self.vm().msg_sender() != self.owner.get() {
@@ -249,6 +277,10 @@ impl DIURegistry {
     pub fn link_orcid(&mut self, orcid_id: String) -> Result<(), RegistryError> {
         if orcid_id.is_empty() {
             return Err(RegistryError::EmptyString(EmptyString {}));
+        }
+
+        if !Self::validate_orcid_format(&orcid_id) {
+            return Err(RegistryError::InvalidOrcidFormat(InvalidOrcidFormat {}));
         }
 
         let caller = self.vm().msg_sender();
@@ -579,6 +611,83 @@ mod tests {
             result,
             Err(RegistryError::OrcidAlreadyRegistered(_))
         ));
+    }
+
+    #[test]
+    fn test_link_orcid_with_x_checksum_success() {
+        let (vm, mut contract) = setup();
+        vm.set_sender(ALICE);
+        contract.register_user("uri".into()).unwrap();
+
+        // Last character 'X' is valid per ORCID spec (checksum).
+        contract.link_orcid("0000-0002-1825-000X".into()).unwrap();
+
+        let (_, orcid, _, _) = contract.get_user(ALICE);
+        assert_eq!(orcid, "0000-0002-1825-000X");
+    }
+
+    #[test]
+    fn test_link_orcid_invalid_format_reverts() {
+        let (vm, mut contract) = setup();
+        vm.set_sender(ALICE);
+        contract.register_user("uri".into()).unwrap();
+
+        // Missing dashes — wrong format.
+        let result = contract.link_orcid("0000000123456789".into());
+        assert!(matches!(result, Err(RegistryError::InvalidOrcidFormat(_))));
+    }
+
+    #[test]
+    fn test_link_orcid_empty_string_reverts() {
+        let (vm, mut contract) = setup();
+        vm.set_sender(ALICE);
+        contract.register_user("uri".into()).unwrap();
+
+        let result = contract.link_orcid("".into());
+        // Empty string hits EmptyString before format check.
+        assert!(matches!(result, Err(RegistryError::EmptyString(_))));
+    }
+
+    #[test]
+    fn test_link_orcid_wrong_length_reverts() {
+        let (vm, mut contract) = setup();
+        vm.set_sender(ALICE);
+        contract.register_user("uri".into()).unwrap();
+
+        // 18 chars — too short.
+        let result = contract.link_orcid("0000-0001-2345-678".into());
+        assert!(matches!(result, Err(RegistryError::InvalidOrcidFormat(_))));
+    }
+
+    #[test]
+    fn test_link_orcid_letters_in_digits_reverts() {
+        let (vm, mut contract) = setup();
+        vm.set_sender(ALICE);
+        contract.register_user("uri".into()).unwrap();
+
+        // Non-digit in a digit group.
+        let result = contract.link_orcid("000A-0001-2345-6789".into());
+        assert!(matches!(result, Err(RegistryError::InvalidOrcidFormat(_))));
+    }
+
+    // ─── validate_orcid_format unit tests ───────────────────────────
+
+    #[test]
+    fn test_validate_orcid_format_valid() {
+        assert!(DIURegistry::validate_orcid_format("0000-0001-2345-6789"));
+        assert!(DIURegistry::validate_orcid_format("0000-0002-1825-000X"));
+        assert!(DIURegistry::validate_orcid_format("0009-9999-9999-9999"));
+    }
+
+    #[test]
+    fn test_validate_orcid_format_invalid() {
+        assert!(!DIURegistry::validate_orcid_format(""));
+        assert!(!DIURegistry::validate_orcid_format("0000000123456789"));   // no dashes
+        assert!(!DIURegistry::validate_orcid_format("0000-0001-2345-678")); // too short
+        assert!(!DIURegistry::validate_orcid_format("0000-0001-2345-67890")); // too long
+        assert!(!DIURegistry::validate_orcid_format("000A-0001-2345-6789")); // letter in digit group
+        assert!(!DIURegistry::validate_orcid_format("0000-0001-2345-678x")); // lowercase x
+        assert!(!DIURegistry::validate_orcid_format("0000/0001/2345/6789")); // wrong separator
     }
 
     // ─── verify_researcher ───────────────────────────────────────────
