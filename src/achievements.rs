@@ -243,7 +243,9 @@ impl DIUAchievements {
         // Append to user's token list
         let count = self.user_token_count.get(user);
         self.user_token_at.setter(user).setter(count).set(token_id);
-        self.user_token_count.setter(user).set(count + U256::from(1));
+        self.user_token_count
+            .setter(user)
+            .set(count + U256::from(1));
 
         // Update total supply
         let supply = self.total_supply.get();
@@ -279,11 +281,7 @@ impl DIUAchievements {
     }
 
     /// Disabled — tokens are soulbound (non-transferable).
-    pub fn approve(
-        &mut self,
-        _to: Address,
-        _token_id: U256,
-    ) -> Result<(), AchievementsError> {
+    pub fn approve(&mut self, _to: Address, _token_id: U256) -> Result<(), AchievementsError> {
         Err(AchievementsError::Soulbound(Soulbound {}))
     }
 
@@ -487,7 +485,10 @@ mod tests {
         contract.initialize().unwrap();
 
         let result = contract.initialize();
-        assert!(matches!(result, Err(AchievementsError::AlreadyInitialized(_))));
+        assert!(matches!(
+            result,
+            Err(AchievementsError::AlreadyInitialized(_))
+        ));
     }
 
     #[test]
@@ -499,7 +500,10 @@ mod tests {
 
         // Verify by trying to initialize again
         let result = contract.initialize();
-        assert!(matches!(result, Err(AchievementsError::AlreadyInitialized(_))));
+        assert!(matches!(
+            result,
+            Err(AchievementsError::AlreadyInitialized(_))
+        ));
     }
 
     // ─── mint ────────────────────────────────────────────────────────
@@ -544,7 +548,10 @@ mod tests {
             contract.get_achievement_token(ALICE, ACH_FIRST_EXPERIMENT),
             token_id
         );
-        assert_eq!(contract.get_token_achievement(token_id), ACH_FIRST_EXPERIMENT);
+        assert_eq!(
+            contract.get_token_achievement(token_id),
+            ACH_FIRST_EXPERIMENT
+        );
     }
 
     #[test]
@@ -624,10 +631,7 @@ mod tests {
         vm.set_sender(ALICE);
 
         let result = contract.mint(BOB, ACH_FIRST_EXPERIMENT, "ipfs://x".into());
-        assert!(matches!(
-            result,
-            Err(AchievementsError::Unauthorized(_))
-        ));
+        assert!(matches!(result, Err(AchievementsError::Unauthorized(_))));
     }
 
     #[test]
@@ -635,10 +639,7 @@ mod tests {
         let (_, mut contract) = setup_with_backend();
 
         let result = contract.mint(Address::ZERO, ACH_FIRST_EXPERIMENT, "ipfs://x".into());
-        assert!(matches!(
-            result,
-            Err(AchievementsError::ZeroAddress(_))
-        ));
+        assert!(matches!(result, Err(AchievementsError::ZeroAddress(_))));
     }
 
     #[test]
@@ -646,10 +647,7 @@ mod tests {
         let (_, mut contract) = setup_with_backend();
 
         let result = contract.mint(ALICE, ACH_FIRST_EXPERIMENT, "".into());
-        assert!(matches!(
-            result,
-            Err(AchievementsError::EmptyString(_))
-        ));
+        assert!(matches!(result, Err(AchievementsError::EmptyString(_))));
     }
 
     // ─── get_achievements ────────────────────────────────────────────
@@ -749,10 +747,7 @@ mod tests {
         let (_, contract) = setup();
 
         let result = contract.token_uri(U256::from(999));
-        assert!(matches!(
-            result,
-            Err(AchievementsError::TokenNotFound(_))
-        ));
+        assert!(matches!(result, Err(AchievementsError::TokenNotFound(_))));
     }
 
     #[test]
@@ -784,10 +779,7 @@ mod tests {
         vm.set_sender(ALICE);
 
         let result = contract.grant_authorized(BACKEND);
-        assert!(matches!(
-            result,
-            Err(AchievementsError::Unauthorized(_))
-        ));
+        assert!(matches!(result, Err(AchievementsError::Unauthorized(_))));
     }
 
     #[test]
@@ -795,10 +787,7 @@ mod tests {
         let (_, mut contract) = setup();
 
         let result = contract.grant_authorized(Address::ZERO);
-        assert!(matches!(
-            result,
-            Err(AchievementsError::ZeroAddress(_))
-        ));
+        assert!(matches!(result, Err(AchievementsError::ZeroAddress(_))));
     }
 
     #[test]
@@ -827,10 +816,7 @@ mod tests {
 
         vm.set_sender(BACKEND);
         let result = contract.mint(BOB, ACH_FIRST_EXPERIMENT, "ipfs://y".into());
-        assert!(matches!(
-            result,
-            Err(AchievementsError::Unauthorized(_))
-        ));
+        assert!(matches!(result, Err(AchievementsError::Unauthorized(_))));
     }
 
     // ─── Default View Values ─────────────────────────────────────────

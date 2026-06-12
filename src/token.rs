@@ -11,7 +11,7 @@ use stylus_sdk::{
     prelude::*,
 };
 
-use crate::pause::{ContractNotPaused, ContractPaused, Paused, PauseError, PauseStorage, Unpaused};
+use crate::pause::{ContractNotPaused, ContractPaused, PauseError, PauseStorage, Paused, Unpaused};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -271,9 +271,7 @@ impl DIUToken {
         let current_allowance = self.allowances.getter(from).get(caller);
 
         if current_allowance < amount {
-            return Err(TokenError::InsufficientAllowance(
-                InsufficientAllowance {},
-            ));
+            return Err(TokenError::InsufficientAllowance(InsufficientAllowance {}));
         }
 
         // Don't decrease infinite allowance
@@ -784,10 +782,7 @@ mod tests {
 
         vm.set_sender(BOB);
         let result = contract.transfer_from(ALICE, OWNER, U256::from(200));
-        assert!(matches!(
-            result,
-            Err(TokenError::InsufficientAllowance(_))
-        ));
+        assert!(matches!(result, Err(TokenError::InsufficientAllowance(_))));
     }
 
     #[test]

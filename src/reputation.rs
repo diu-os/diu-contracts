@@ -29,13 +29,7 @@ const MAX_DAILY_XP: u64 = 500;
 
 /// Level thresholds (checked top-down): (min_xp, level).
 /// Levels: 1(0), 2(100), 3(300), 4(600), 5(1000).
-const LEVEL_THRESHOLDS: [(u64, u8); 5] = [
-    (1000, 5),
-    (600, 4),
-    (300, 3),
-    (100, 2),
-    (0, 1),
-];
+const LEVEL_THRESHOLDS: [(u64, u8); 5] = [(1000, 5), (600, 4), (300, 3), (100, 2), (0, 1)];
 
 // ═══════════════════════════════════════════════════════════════════════════
 // EVENTS
@@ -206,11 +200,7 @@ impl DIUReputation {
     /// Note: if a user hits the cap mid-day before `record_daily_login`, the
     /// streak is still recorded but the 10 XP are not awarded. Acceptable
     /// edge case for testnet Phase 2.
-    fn internal_add_xp(
-        &mut self,
-        user: Address,
-        amount: U256,
-    ) -> Result<(), ReputationError> {
+    fn internal_add_xp(&mut self, user: Address, amount: U256) -> Result<(), ReputationError> {
         // ── Daily XP cap (Gap #4 / E-4) ──────────────────────────────
         let today = U256::from(self.vm().block_timestamp() / SECONDS_PER_DAY);
         let last = self.last_xp_day.get(user);
@@ -259,10 +249,7 @@ impl DIUReputation {
         let old_level = Self::compute_level(old_xp);
         let new_level = Self::compute_level(new_xp);
         if new_level > old_level {
-            self.vm().log(LevelUp {
-                user,
-                new_level,
-            });
+            self.vm().log(LevelUp { user, new_level });
         }
 
         Ok(())
@@ -329,7 +316,9 @@ impl DIUReputation {
         self.internal_add_xp(user, amount)?;
         // Increment only after successful XP award so a failed internal_add_xp
         // does not consume the nonce (matches on-chain revert semantics in tests).
-        self.user_nonces.setter(user).set(U64::from(nonce.wrapping_add(1)));
+        self.user_nonces
+            .setter(user)
+            .set(U64::from(nonce.wrapping_add(1)));
 
         Ok(())
     }
@@ -577,7 +566,10 @@ mod tests {
         contract.initialize().unwrap();
 
         let result = contract.initialize();
-        assert!(matches!(result, Err(ReputationError::AlreadyInitialized(_))));
+        assert!(matches!(
+            result,
+            Err(ReputationError::AlreadyInitialized(_))
+        ));
     }
 
     #[test]
@@ -589,7 +581,10 @@ mod tests {
 
         // Verify by trying to initialize again
         let result = contract.initialize();
-        assert!(matches!(result, Err(ReputationError::AlreadyInitialized(_))));
+        assert!(matches!(
+            result,
+            Err(ReputationError::AlreadyInitialized(_))
+        ));
     }
 
     // ─── add_xp ─────────────────────────────────────────────────────
@@ -763,10 +758,7 @@ mod tests {
 
         assert_eq!(contract.get_streak(ALICE), U256::from(3));
         assert_eq!(contract.get_longest_streak(ALICE), U256::from(3));
-        assert_eq!(
-            contract.get_xp(ALICE),
-            U256::from(DAILY_LOGIN_XP * 3)
-        );
+        assert_eq!(contract.get_xp(ALICE), U256::from(DAILY_LOGIN_XP * 3));
     }
 
     #[test]

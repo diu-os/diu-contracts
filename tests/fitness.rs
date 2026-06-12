@@ -10,13 +10,13 @@
 //!
 //! Каждая fitness function помечена соответствующим QAR-ID из QAT.md.
 
+use alloy_primitives::{address, Address, U256};
+use diu_contracts::achievements::DIUAchievements;
+use diu_contracts::progress::DIUProgress;
 use diu_contracts::registry::DIURegistry;
 use diu_contracts::reputation::DIUReputation;
-use diu_contracts::achievements::DIUAchievements;
 use diu_contracts::token::DIUToken;
-use diu_contracts::progress::DIUProgress;
 use stylus_sdk::testing::*;
-use alloy_primitives::{address, Address, U256};
 
 const OWNER: Address = address!("1111111111111111111111111111111111111111");
 const ATTACKER: Address = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
@@ -145,11 +145,7 @@ fn ff_achievement_mint_rejects_unauthorized() {
     contract.initialize().expect("Init must succeed");
 
     vm.set_sender(ATTACKER);
-    let result = contract.mint(
-        ALICE,
-        U256::from(1u64),
-        String::from("ipfs://fake"),
-    );
+    let result = contract.mint(ALICE, U256::from(1u64), String::from("ipfs://fake"));
     assert!(
         result.is_err(),
         "INVARIANT VIOLATED (Q-06): Unauthorized achievement mint must be rejected"
@@ -201,7 +197,8 @@ fn ff_xp_level_within_safe_bounds() {
         while remaining > U256::ZERO {
             vm_inner.set_block_timestamp(day * 86_400);
             let award = remaining.min(chunk);
-            c.add_xp(ALICE, award, nonce).expect("add_xp should succeed");
+            c.add_xp(ALICE, award, nonce)
+                .expect("add_xp should succeed");
             remaining -= award;
             nonce += 1;
             day += 1;
@@ -316,7 +313,10 @@ fn ff_contracts_state_is_isolated() {
     // Пытаемся добавить XP с другого адреса — Err
     vm1.set_sender(Address::ZERO);
     let failed = rep.add_xp(ALICE, U256::from(100u64), 0);
-    assert!(failed.is_err(), "Precondition: zero-address add_xp should fail");
+    assert!(
+        failed.is_err(),
+        "Precondition: zero-address add_xp should fail"
+    );
 
     // После ошибки в Reputation — Registry должен работать нормально
     let vm2 = TestVMBuilder::new().sender(OWNER).build();

@@ -407,8 +407,8 @@ impl DIURegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stylus_sdk::testing::*;
     use alloy_primitives::address;
+    use stylus_sdk::testing::*;
 
     const OWNER: Address = address!("1111111111111111111111111111111111111111");
     const ALICE: Address = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
@@ -682,7 +682,7 @@ mod tests {
     #[test]
     fn test_validate_orcid_format_invalid() {
         assert!(!DIURegistry::validate_orcid_format(""));
-        assert!(!DIURegistry::validate_orcid_format("0000000123456789"));   // no dashes
+        assert!(!DIURegistry::validate_orcid_format("0000000123456789")); // no dashes
         assert!(!DIURegistry::validate_orcid_format("0000-0001-2345-678")); // too short
         assert!(!DIURegistry::validate_orcid_format("0000-0001-2345-67890")); // too long
         assert!(!DIURegistry::validate_orcid_format("000A-0001-2345-6789")); // letter in digit group
