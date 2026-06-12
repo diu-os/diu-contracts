@@ -17,6 +17,8 @@ alloy-tx-macros = "=1.0.41"
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 stylus-sdk = { version = "0.10.0", features = ["stylus-test"] }
+# EIP-712 signature fixtures for DIUProgress v2 attestation tests (ADR D-087)
+k256 = { version = "0.13", features = ["ecdsa"] }
 
 [features]
 export-abi = ["stylus-sdk/export-abi"]

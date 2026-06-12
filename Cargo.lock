@@ -1234,6 +1234,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "alloy-tx-macros",
+ "k256",
  "stylus-sdk",
  "tokio",
 ]
@@ -1962,6 +1963,7 @@ dependencies = [
  "once_cell",
  "serdect",
  "sha2",
+ "signature",
 ]
 
 [[package]]
