@@ -816,7 +816,7 @@ Break-even: ~2000 active users with 20% premium conversion
 - ~~Testnet deployment (February 2026)~~ ✅ Done — redeployed 19 Feb 2026 with `initialize()`
 - Security review with Kirill (March 2026) ← next
 - External audit (May 2026)
-- Mainnet launch (June 2026)
+- Mainnet launch (June 2026) — **did not happen**; Sepolia only as of Aug 2026
 
 *Version 1.1 | February 22, 2026*
 *Authors: Barust + Claude Code*

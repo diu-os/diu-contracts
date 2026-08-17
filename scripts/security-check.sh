@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # DIU OS — Security Check Script
-# Тестирует access control для всех 5 контрактов на Arbitrum Sepolia.
+# Тестирует access control на Arbitrum Sepolia (read/write reverts).
 # Запуск: ATTACKER_KEY=<test-key> bash scripts/security-check.sh
 #
 # ВНИМАНИЕ: ATTACKER_KEY — тестовый ключ, НЕ deployer!
@@ -16,7 +16,8 @@ REGISTRY="0x49e1b11e1037e74113a7c0ccc41e3042d4691018"
 REPUTATION="0x8740f9d110133ff5efa0fb562e62ab92a466cdc5"
 ACHIEVEMENTS="0x1a9783ba7966c0e7299af7ee2228e19028d8ea7e"
 TOKEN="0xbbd9a558c049482f1be45399fec4a4c9dc1c810e"
-PROGRESS="0xb1c4edc73aae322f62cda57f84f303761ca3e347"
+# v1 0xb1c4edc73aae322f62cda57f84f303761ca3e347 is deprecated — do not target it.
+PROGRESS="0x553dfc81b24920ce374a6eb0847187cbdd3c82ea"
 
 DUMMY_ADDR="0x1234567890123456789012345678901234567890"
 
@@ -67,12 +68,12 @@ check "mint unauthorized" "$OUT"
 echo ""
 echo "═══ DIUProgress — access control ═══"
 
-echo "→ recordSimulation без авторизации должен revert"
+echo "→ attestResult без авторизации должен revert (DIUProgress v2)"
 OUT=$(cast send "$PROGRESS" \
-  "recordSimulation(address,uint256,uint256)" "$DUMMY_ADDR" 0 50 \
+  "attestResult(bytes32)" "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
   --private-key "$ATTACKER_KEY" \
   --rpc-url "$RPC" 2>&1 || true)
-check "recordSimulation unauthorized" "$OUT"
+check "attestResult unauthorized" "$OUT"
 
 # TODO: добавить getExportSnapshot check
 

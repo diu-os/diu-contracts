@@ -1,0 +1,19 @@
+# SUPERSEDED — do not use these addresses.
+# Early Feb 2026 deploy, replaced 19 Feb 2026. Current Sepolia book is README.md.
+# Deployer below is the old key (compromised). Current deployer: 0x5249D73BeecF9aBf64b38AbF176633056Dd4fD7C
+#
+# DIU OS - Final Deployed Contract Addresses
+# Network: Arbitrum Sepolia
+# Deploy Date: February 15, 2026
+# Deployer: 0x67bB4D1895D9A736F9e6076529B468ba05aeD150
+
+export DIU_ACHIEVEMENTS_ADDRESS=0x72bbe907b62ac1d964610f7019aa19b986986535
+export DIU_TOKEN_ADDRESS=0x35ec6ca36f7e9b1d35ffe8e74e78a5882f899ce2
+export DIU_REGISTRY_ADDRESS=0x3873828826a5e7768d2ad934b8466f817d5d5d07
+export DIU_REPUTATION_ADDRESS=0x10696cc645b4a9adbdede4a1e3d515621140a83c
+
+# Arbiscan Links
+# DIUAchievements: https://sepolia.arbiscan.io/address/0x72bbe907b62ac1d964610f7019aa19b986986535
+# DIUToken: https://sepolia.arbiscan.io/address/0x35ec6ca36f7e9b1d35ffe8e74e78a5882f899ce2
+# DIURegistry: https://sepolia.arbiscan.io/address/0x3873828826a5e7768d2ad934b8466f817d5d5d07
+# DIUReputation: https://sepolia.arbiscan.io/address/0x10696cc645b4a9adbdede4a1e3d515621140a83c
