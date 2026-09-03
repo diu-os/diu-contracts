@@ -1,3 +1,7 @@
+> **Historical (Feb 2026). Not the shipped product spec.**
+> NFT certificates, OpenSea badges, “Researcher NFT”, AI tutor monetization, and mainnet timelines in this file were a vision draft. They did **not** ship.
+> Current public facts: Arbitrum **Sepolia** only; DIUProgress **v2** attestation (`0x553dfc81…`); no mainnet; no NFT certificates. See [README.md](../README.md).
+
 # 🏗️ DIU OS — Complete Smart Contracts Business Logic Analysis
 ## Comprehensive Explanation of Business Logic and Architectural Relationships
 
